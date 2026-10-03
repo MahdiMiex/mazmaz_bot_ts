@@ -47,27 +47,42 @@ export async function handleTextMessage(ctx: Context) {
     return;
   }
 
-  // در گروه‌ها فقط در ۳ حالت پاسخ داده شود:
-  // ۱. ریپلای مستقیم روی پیام ربات
-  // ۲. منشن شدن دقیق نام کاربری ربات (@mazmazAgentBot)
-  // ۳. پیام‌های دستوری (کامندهایی که با / شروع می‌شوند)
+  // در گروه‌ها زمانی پاسخ داده شود که:
+  // ۱. ریپلای مستقیم روی پیام ربات باشد
+  // ۲. اسم ربات صدا زده شود (مزمز یا mazmaz)
+  // ۳. یوزرنیم ربات منشن شود (@mazmazAgentBot)
+  // ۴. پیام با کامند شروع شود (/)
   if (isGroup) {
     const botInfo = ctx.me;
     const isReplyToBot = ctx.message?.reply_to_message?.from?.id === botInfo.id;
     const isBotMentioned = lower.includes(`@${botInfo.username.toLowerCase()}`);
+    const isNameCalled = /(?:^|\s|[،,:.])(مزمز|mazmaz)(?:\s|[،,:.!؟?]|$)/i.test(text);
     const isCommand = text.startsWith("/");
 
-    if (!isReplyToBot && !isBotMentioned && !isCommand) {
+    if (!isReplyToBot && !isBotMentioned && !isNameCalled && !isCommand) {
       return;
     }
   }
 
-  // Clean prompt by removing bot name mentions
+  // تمیز کردن پرامپت با حذف نام ربات و منشن‌ها
   let cleanText = text
     .replace(new RegExp(`@${ctx.me.username}\\b`, "gi"), "")
     .replace(/مزمزم?|mazmaz/gi, "")
+    .replace(/^[\s،,:!؟?]+|[\s،,:!؟?]+$/g, "")
     .trim();
   const cleanLower = cleanText.toLowerCase();
+
+  // اگر کاربر فقط اسم ربات را صدا زده بود (مثلاً «مزمز» یا «سلام مزمز»)
+  if (!cleanText || cleanLower === "سلام" || cleanLower === "درود") {
+    const greetings = [
+      "جانم داداش؟ گوشم کاملاً با توئه، بگو ببینم چی می‌خوای! 👂😎",
+      "جون دلم رفیق! مزمز اینجاست، امر بفرما 🚀",
+      "سلام و ارادت! بگو ببینم چه کار فنی یا سوالی داری تا با هم ردیفش کنیم؟ ⚡",
+    ];
+    const picked = greetings[Math.floor(Math.random() * greetings.length)];
+    await ctx.reply(picked);
+    return;
+  }
 
   // 1. Check for Profanity (Anti-toxic funny roast + Report to Admin)
   const roast = checkProfanity(text);
