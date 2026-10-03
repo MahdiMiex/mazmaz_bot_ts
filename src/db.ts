@@ -403,6 +403,19 @@ export function addQuota(userId: number, amount: number): number {
   return updated;
 }
 
+export function boostUserQuota(targetUserId: number, amount = 10): { ok: boolean; newQuota?: number } {
+  const user = db.query("SELECT daily_quota FROM users WHERE user_id = ?").get(targetUserId) as any;
+  if (!user) {
+    db.run(
+      "INSERT INTO users (user_id, daily_quota, is_approved) VALUES (?, ?, 1)",
+      [targetUserId, CONFIG.DEFAULT_DAILY_QUOTA + amount]
+    );
+    return { ok: true, newQuota: CONFIG.DEFAULT_DAILY_QUOTA + amount };
+  }
+  const newQuota = addQuota(targetUserId, amount);
+  return { ok: true, newQuota };
+}
+
 export function saveFeedbackReport(
   userId: number,
   type: "bug" | "suggestion" | "criticism" | "profanity",

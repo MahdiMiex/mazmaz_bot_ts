@@ -3,8 +3,9 @@ import { getCryptoPrices } from "../services/crypto";
 import { queryBenchmark, LMSYS_ARENA_SUMMARY, TOP_HARDWARE_BENCHMARKS } from "../services/benchmarks";
 import { fetchAndAnalyzeLink } from "../services/linkReader";
 import { searchWeb } from "../services/webSearch";
-import { addTask, getTasks } from "../db";
+import { addTask, getTasks, boostUserQuota } from "../db";
 import { runToolWithLogger } from "../utils/toolLogger";
+import { CONFIG } from "../config";
 
 export interface ToolDefinition {
   name: string;
@@ -82,6 +83,18 @@ export const TOOLS_SCHEMA: ToolDefinition[] = [
       required: ["action"],
     },
   },
+  {
+    name: "boost_quota",
+    description: "افزایش سهمیه روزانه کاربر توسط ادمین",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        targetUserId: { type: "INTEGER", description: "شناسه عددی کاربر تلگرام" },
+        amount: { type: "INTEGER", description: "تعداد پیام اضافه (پیشفرض ۱۰)" },
+      },
+      required: ["targetUserId"],
+    },
+  },
 ];
 
 export async function executeTool(
@@ -91,6 +104,27 @@ export async function executeTool(
 ): Promise<string> {
   try {
     switch (toolName) {
+      case "boost_quota": {
+        return await runToolWithLogger("BOOST_QUOTA", String(args.targetUserId), async () => {
+          const isAdmin = CONFIG.ADMIN_IDS.includes(userId);
+          if (!isAdmin) {
+            return "خطا: شما دسترسی لازم برای افزایش یا تغییر سهمیه کاربران را ندارید. این عملیات فقط مختص رئیس مهدی است.";
+          }
+          const targetUserId = Number(args.targetUserId);
+          const amount = Number(args.amount) || 10;
+          if (!targetUserId || isNaN(targetUserId)) {
+            return "خطا: شناسه عددی کاربر نامعتبر است.";
+          }
+          const res = boostUserQuota(targetUserId, amount);
+          return JSON.stringify({
+            ok: res.ok,
+            targetUserId,
+            amountAdded: amount,
+            newQuota: res.newQuota,
+            message: `سهمیه کاربر ${targetUserId} به میزان ${amount} افزایش یافت. سهمیه جدید: ${res.newQuota}`,
+          });
+        });
+      }
       case "web_search": {
         const query = args.query || args.q || "";
         return await searchWeb(query);

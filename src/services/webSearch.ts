@@ -132,70 +132,106 @@ async function searchSearXNG(query: string, maxResults: number): Promise<string 
 }
 
 /**
- * Tier 4: DuckDuckGo Scraper (Default Zero-Config fallback with retry)
+ * Tier 4: DuckDuckGo Lite Scraper (Instant zero-bot-challenge scraping)
  */
-async function searchDuckDuckGo(query: string, maxResults: number): Promise<string> {
-  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+async function searchDuckDuckGoLite(query: string, maxResults: number): Promise<string | null> {
+  const url = "https://lite.duckduckgo.com/lite/";
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      body: "q=" + encodeURIComponent(query),
+      // @ts-ignore
+      agent,
+    });
 
-  let html = "";
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "fa,en-US;q=0.9,en;q=0.8",
-        },
-        // @ts-ignore
-        agent,
-      });
-      if (res.ok) {
-        html = await res.text();
-        break;
+    if (!res.ok) return null;
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    const results: SearchResult[] = [];
+
+    $(".result-link").slice(0, maxResults).each((_, el) => {
+      const title = $(el).text().trim();
+      const rawLink = $(el).attr("href") || "";
+      const tr = $(el).closest("tr");
+      const snippet = tr.next().find(".result-snippet").text().trim();
+
+      if (title && (snippet || rawLink)) {
+        results.push({
+          title,
+          snippet: snippet || "بدون توضیح",
+          link: cleanUrl(rawLink),
+        });
       }
-    } catch (e: any) {
-      if (attempt === 1) {
-        console.warn("[DDG SCRAPE] Connection dropped, returning fallback:", e?.message);
-        return `امکان برقراری ارتباط با وب‌سرچ برای «${query}» در این لحظه میسر نشد. لطفاً بر اساس دانش داخلی خودت پاسخ بده.`;
+    });
+
+    if (results.length === 0) return null;
+
+    const formatted = results
+      .map(
+        (r, i) =>
+          `[${i + 1}] <b>${r.title}</b>\n• ${r.snippet.slice(0, 160)}...\n• منبع: ${r.link}`
+      )
+      .join("\n\n");
+
+    return `🔍 <b>نتایج زنده وب (DuckDuckGo):</b>\n\n${formatted}`;
+  } catch (e: any) {
+    console.warn("[DDG LITE] Failed:", e?.message);
+    return null;
+  }
+}
+
+/**
+ * Tier 5: Google News RSS Scraper (Real-time breaking events and headlines)
+ */
+async function searchGoogleNews(query: string, maxResults: number): Promise<string | null> {
+  const isFa = /[\u0600-\u06FF]/.test(query);
+  const langParams = isFa ? "&hl=fa&gl=IR&ceid=IR:fa" : "&hl=en-US&gl=US&ceid=US:en";
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}${langParams}`;
+
+  try {
+    const res = await fetch(url, {
+      // @ts-ignore
+      agent,
+    });
+    if (!res.ok) return null;
+    const xml = await res.text();
+    const $ = cheerio.load(xml, { xmlMode: true });
+    const items: SearchResult[] = [];
+
+    $("item").slice(0, maxResults).each((_, el) => {
+      const title = $(el).find("title").text().trim();
+      const link = $(el).find("link").text().trim();
+      const pubDate = $(el).find("pubDate").text().trim();
+
+      if (title) {
+        items.push({
+          title,
+          snippet: pubDate ? `تاریخ انتشار: ${pubDate}` : "خبر برخط",
+          link: cleanUrl(link),
+        });
       }
-      await new Promise((r) => setTimeout(r, 600));
-    }
+    });
+
+    if (items.length === 0) return null;
+
+    const formatted = items
+      .map(
+        (r, i) =>
+          `[${i + 1}] <b>${r.title}</b>\n• ${r.snippet}\n• منبع: ${r.link}`
+      )
+      .join("\n\n");
+
+    return `📰 <b>جدیدترین اخبار برخط (Google News):</b>\n\n${formatted}`;
+  } catch (e: any) {
+    console.warn("[GOOGLE NEWS RSS] Failed:", e?.message);
+    return null;
   }
-
-  if (!html) {
-    return `امکان برقراری ارتباط با وب‌سرچ برای «${query}» در این لحظه میسر نشد. لطفاً بر اساس دانش داخلی خودت پاسخ بده.`;
-  }
-
-  const $ = cheerio.load(html);
-  const results: SearchResult[] = [];
-
-  $(".result").slice(0, maxResults).each((_, el) => {
-    const title = $(el).find(".result__title").text().trim();
-    const snippet = $(el).find(".result__snippet").text().trim();
-    const rawLink = $(el).find(".result__url").text().trim();
-
-    if (title && (snippet || rawLink)) {
-      results.push({
-        title,
-        snippet: (snippet || "بدون توضیح").slice(0, 160),
-        link: cleanUrl(rawLink),
-      });
-    }
-  });
-
-  if (results.length === 0) {
-    return `هیچ نتیجه‌ای در وب برای «${query}» پیدا نشد.`;
-  }
-
-  const formatted = results
-    .map(
-      (r, i) =>
-        `[${i + 1}] <b>${r.title}</b>\n• ${r.snippet}...\n• منبع: ${r.link}`
-    )
-    .join("\n\n");
-
-  return `🔍 <b>نتایج زنده وب:</b>\n\n${formatted}`;
 }
 
 /**
@@ -239,14 +275,28 @@ export async function searchWeb(query: string, maxResults = 3): Promise<string> 
       }
     }
 
-    // 4. Default resilient fallback: DuckDuckGo scraper
+    // 4. DuckDuckGo Lite Scraper (high-speed, clean, zero captcha)
     if (!output) {
       try {
-        output = await searchDuckDuckGo(cleanQuery, maxResults);
+        const ddgRes = await searchDuckDuckGoLite(cleanQuery, maxResults);
+        if (ddgRes) output = ddgRes;
       } catch (e: any) {
-        console.warn("[SEARCH FALLBACK] Error in searchDuckDuckGo:", e?.message);
-        output = `امکان استعلام وب در این لحظه میسر نشد. لطفاً بر اساس اطلاعات موجود پاسخ کامل بده.`;
+        console.warn("[SEARCH FALLBACK] Error in searchDuckDuckGoLite:", e?.message);
       }
+    }
+
+    // 5. Google News RSS (if search looks like news or previous tiers gave empty)
+    if (!output) {
+      try {
+        const newsRes = await searchGoogleNews(cleanQuery, maxResults);
+        if (newsRes) output = newsRes;
+      } catch (e: any) {
+        console.warn("[SEARCH FALLBACK] Error in searchGoogleNews:", e?.message);
+      }
+    }
+
+    if (!output) {
+      output = `امکان استعلام وب در این لحظه میسر نشد. لطفاً بر اساس اطلاعات موجود و دانش خودت پاسخ کامل بده.`;
     }
 
     // Token Guard: Hard cap output length to ~1400 chars (prevents token inflation)

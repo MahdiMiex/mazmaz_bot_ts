@@ -62,18 +62,22 @@ export function splitMessage(text: string, maxLen = 3800): string[] {
 }
 
 /**
- * Sends a Telegram chat action (e.g. "typing") periodically until the async action completes.
+ * Sends a Telegram chat action (e.g. "typing", "upload_video", "find_location") periodically until the async action completes.
  */
-export async function withTyping<T>(ctx: Context, action: () => Promise<T>): Promise<T> {
-  const sendTyping = async () => {
+export async function withTyping<T>(
+  ctx: Context,
+  action: () => Promise<T>,
+  chatAction: "typing" | "upload_video" | "find_location" = "typing"
+): Promise<T> {
+  const sendAction = async () => {
     try {
-      await ctx.replyWithChatAction("typing");
-    } catch (e: any) {
-      console.warn("replyWithChatAction error:", e?.message);
+      await ctx.replyWithChatAction(chatAction);
+    } catch {
+      // Ignore chat action failures
     }
   };
-  await sendTyping();
-  const interval = setInterval(sendTyping, 3000);
+  await sendAction();
+  const interval = setInterval(sendAction, 3000);
   try {
     return await action();
   } finally {

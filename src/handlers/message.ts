@@ -107,6 +107,9 @@ export async function handleTextMessage(ctx: Context) {
     }
   }
 
+  // ارسال فوری اکشن تایپینگ بالای چت تلگرام
+  ctx.replyWithChatAction("typing").catch(() => {});
+
   // تمیز کردن پرامپت با حذف خطاب مستقیم و نام ربات
   let cleanText = text
     .replace(new RegExp(`@${ctx.me.username}\\b`, "gi"), "")
