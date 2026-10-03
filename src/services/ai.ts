@@ -40,23 +40,46 @@ export function isPersian(text: string): boolean {
 }
 
 export async function testGeminiKey(apiKey: string): Promise<{ ok: boolean; message: string }> {
-  try {
-    const testAi = new GoogleGenAI({
-      apiKey: apiKey.trim(),
-      // @ts-ignore
-      httpOptions: agent ? { agent } : undefined,
-    });
-    const res = await testAi.models.generateContent({
-      model: CONFIG.AI_MODEL || "gemini-flash-latest",
-      contents: "ping",
-    });
-    if (res.text) {
-      return { ok: true, message: "کلید هوش مصنوعی معتبر است و Gemini با موفقیت متصل شد! 🚀" };
+  const cleanKey = apiKey.trim();
+  const testAi = new GoogleGenAI({
+    apiKey: cleanKey,
+    // @ts-ignore
+    httpOptions: agent ? { agent } : undefined,
+  });
+
+  const testModels = [
+    CONFIG.AI_MODEL || "gemini-3.5-flash-lite",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash",
+    "gemini-2.5-flash",
+  ];
+
+  let lastError: any = null;
+
+  for (const m of testModels) {
+    try {
+      const res = await testAi.models.generateContent({
+        model: m,
+        contents: "ping",
+      });
+      if (res.text) {
+        return { ok: true, message: `کلید هوش مصنوعی معتبر است و با مدل ${m} متصل شد! 🚀` };
+      }
+    } catch (e: any) {
+      lastError = e;
+      const status = e?.status || e?.error?.code;
+      // 503 (High demand) or 429 (Rate limit) means the key is 100% authenticated by Google!
+      if (status === 503 || status === 429) {
+        return {
+          ok: true,
+          message: `کلید هوش مصنوعی توسط گوگل تایید و فعال شد! 🚀 (وضعیت مدل: ترافیک موقت روی سرور گوگل که خودکار برطرف می‌شود)`,
+        };
+      }
     }
-    return { ok: false, message: "پاسخی از مدل دریافت نشد." };
-  } catch (e: any) {
-    return { ok: false, message: `خطا در برقراری ارتباط با گوگل: ${e.message || e}` };
   }
+
+  return { ok: false, message: `خطا در برقراری ارتباط با گوگل: ${lastError?.message || lastError}` };
 }
 
 // جلوگیری از خطای ۴۰۰ جمینای به خاطر پیام‌های تکراری پشت سر هم
