@@ -18,6 +18,9 @@ export const CONFIG = {
     .map((k) => k.trim())
     .filter(Boolean),
   AI_MODEL: process.env.AI_MODEL || "gemini-flash-latest",
+  TAVILY_API_KEY: process.env.TAVILY_API_KEY || "",
+  BRAVE_API_KEY: process.env.BRAVE_API_KEY || "",
+  SEARXNG_URL: process.env.SEARXNG_URL || "",
   DEFAULT_DAILY_QUOTA: parseInt(process.env.DEFAULT_DAILY_QUOTA || "24", 10),
   DB_PATH: path.resolve(import.meta.dir, "../data/bot.sqlite"),
   DOWNLOADS_DIR: path.resolve(import.meta.dir, "../downloads"),

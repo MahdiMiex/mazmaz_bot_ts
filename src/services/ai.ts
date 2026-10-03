@@ -257,11 +257,11 @@ export async function askGemini(userId: number, prompt: string, imageBase64?: st
         functionDeclarations: [
           {
             name: "web_search",
-            description: "Search Google and the live web for up-to-date real-time news, current events, recent tech facts, documentation, or answers you don't know from memory",
+            description: "Search Google and the live web for up-to-date real-time news, current events, recent tech facts, documentation, or answers you don't know from memory. Use short, focused keyword queries.",
             parameters: {
               type: Type.OBJECT,
               properties: {
-                query: { type: Type.STRING, description: "Search query in Persian or English" },
+                query: { type: Type.STRING, description: "Short keyword-focused search query (3-5 words max, in English or Persian)" },
               },
               required: ["query"],
             },

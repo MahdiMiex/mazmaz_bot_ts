@@ -19,11 +19,11 @@ export interface ToolDefinition {
 export const TOOLS_SCHEMA: ToolDefinition[] = [
   {
     name: "web_search",
-    description: "Search Google and the live web for up-to-date real-time news, current events, recent tech facts, documentation, or answers you don't know from memory",
+    description: "Search Google and the live web for up-to-date real-time news, current events, recent tech facts, documentation, or answers you don't know from memory. Use short, focused keyword queries.",
     parameters: {
       type: "OBJECT",
       properties: {
-        query: { type: "STRING", description: "Search query in Persian or English" },
+        query: { type: "STRING", description: "Short keyword-focused search query (3-5 words max, in English or Persian)" },
       },
       required: ["query"],
     },
