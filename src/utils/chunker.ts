@@ -62,27 +62,57 @@ export function splitMessage(text: string, maxLen = 3800): string[] {
 }
 
 /**
+ * Sends a Telegram chat action (e.g. "typing") periodically until the async action completes.
+ */
+export async function withTyping<T>(ctx: Context, action: () => Promise<T>): Promise<T> {
+  const sendTyping = () => {
+    ctx.replyWithChatAction("typing").catch(() => {});
+  };
+  sendTyping();
+  const interval = setInterval(sendTyping, 4000);
+  try {
+    return await action();
+  } finally {
+    clearInterval(interval);
+  }
+}
+
+/**
  * Sends a message safely to Telegram, automatically splitting into multiple
  * messages if it exceeds Telegram limits.
  */
 export async function sendSafeMessage(
   ctx: Context,
   text: string,
-  options: { parse_mode?: "HTML" | "Markdown" | "MarkdownV2"; reply_markup?: any } = { parse_mode: "HTML" }
+  options: {
+    parse_mode?: "HTML" | "Markdown" | "MarkdownV2";
+    reply_markup?: any;
+    reply_parameters?: any;
+  } = { parse_mode: "HTML" }
 ) {
   const chunks = splitMessage(text);
+  const defaultReplyParams = ctx.message?.message_id
+    ? { message_id: ctx.message.message_id, allow_sending_without_reply: true }
+    : undefined;
+  const replyParams = options.reply_parameters !== undefined ? options.reply_parameters : defaultReplyParams;
+
   for (let i = 0; i < chunks.length; i++) {
+    const isFirst = i === 0;
     const isLast = i === chunks.length - 1;
-    const opts = {
+    const opts: any = {
       ...options,
       reply_markup: isLast ? options.reply_markup : undefined,
+      reply_parameters: isFirst ? replyParams : undefined,
     };
     try {
       await ctx.reply(chunks[i], opts);
     } catch (err: any) {
       // Fallback without parse_mode if invalid HTML tags
       console.warn("Failed sending with parse_mode, falling back to plain text:", err.message);
-      await ctx.reply(chunks[i], { reply_markup: opts.reply_markup });
+      await ctx.reply(chunks[i], {
+        reply_markup: opts.reply_markup,
+        reply_parameters: opts.reply_parameters,
+      });
     }
     if (chunks.length > 1 && !isLast) {
       await new Promise((r) => setTimeout(r, 250));

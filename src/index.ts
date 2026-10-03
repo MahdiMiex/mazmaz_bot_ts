@@ -21,7 +21,9 @@ import {
   deleteTask,
   getStats,
   setCommandAccess,
+  formatQuotaFooter,
 } from "./db";
+import { sendSafeMessage, withTyping } from "./utils/chunker";
 import { downloadMedia, cleanupFile } from "./services/mediaDownloader";
 import { getWeather } from "./services/weather";
 import { getCryptoPrices } from "./services/crypto";
@@ -56,7 +58,9 @@ bot.command(["stop", "stop@mazmazAgentBot"], async (ctx) => {
   if (ctx.from) {
     clearUserHistory(ctx.from.id);
   }
-  await ctx.reply("باشه بابا، قطع کردم! هر وقت خواستی برگرد.");
+  await ctx.reply("باشه بابا، قطع کردم! هر وقت خواستی برگرد.", {
+    reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
+  });
 });
 
 // هندل کردن کامند start
@@ -73,7 +77,10 @@ bot.command(
     }
     await ctx.reply(
       "🧹 <b>حافظه مکالمه با موفقیت پاک شد!</b>\nاکنون می‌توانید گفتگوی جدیدی را بدون پیش‌زمینه قبلی آغاز کنید.",
-      { parse_mode: "HTML" }
+      {
+        parse_mode: "HTML",
+        reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
+      }
     );
   }
 );
@@ -83,15 +90,12 @@ bot.command(["tasks", "tasks@mazmazAgentBot"], (ctx) => renderTasksMenu(ctx, ctx
 bot.command(["weather", "weather@mazmazAgentBot", "hava"], async (ctx) => {
   const parts = ctx.message?.text?.trim().split(/\s+/) || [];
   const city = parts.slice(1).join(" ").trim() || "تهران";
-  const waitMsg = await ctx.reply(`🌤️ <i>در حال دریافت وضعیت آب و هوای ${city}... ⏳</i>`, {
+  const res = await withTyping(ctx, () => getWeather(city));
+  const finalMsg = `${res}${formatQuotaFooter(ctx.from!.id)}`;
+  await sendSafeMessage(ctx, finalMsg, {
     parse_mode: "HTML",
+    reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
   });
-  const res = await getWeather(city);
-  try {
-    await ctx.api.editMessageText(ctx.chat!.id, waitMsg.message_id, res, { parse_mode: "HTML" });
-  } catch {
-    await ctx.reply(res, { parse_mode: "HTML" });
-  }
 });
 
 bot.command(["setkey", "setkey@mazmazAgentBot"], async (ctx) => {

@@ -135,7 +135,7 @@ export function registerOrUpdateUser(
   }
 }
 
-export function checkAndConsumeQuota(userId: number): {
+export function checkAndConsumeQuota(userId: number, isGroup = false): {
   allowed: boolean;
   reason: string;
   remaining: number;
@@ -150,7 +150,7 @@ export function checkAndConsumeQuota(userId: number): {
     .get(userId) as any;
 
   if (!user) return { allowed: false, reason: "not_registered", remaining: 0 };
-  if (!user.is_approved) return { allowed: false, reason: "not_approved", remaining: 0 };
+  if (!isGroup && !user.is_approved) return { allowed: false, reason: "not_approved", remaining: 0 };
 
   let usedToday = user.used_today || 0;
   const dailyQuota = user.daily_quota || CONFIG.DEFAULT_DAILY_QUOTA;
@@ -170,6 +170,27 @@ export function checkAndConsumeQuota(userId: number): {
   const newUsed = usedToday + 1;
   db.run(`UPDATE users SET used_today = ? WHERE user_id = ?`, [newUsed, userId]);
   return { allowed: true, reason: "ok", remaining: dailyQuota - newUsed };
+}
+
+export function getUserQuotaInfo(userId: number): { remaining: number; dailyQuota: number; isAdmin: boolean } {
+  if (CONFIG.ADMIN_IDS.includes(userId)) {
+    return { remaining: 999999, dailyQuota: 999999, isAdmin: true };
+  }
+  const todayStr = new Date().toISOString().split("T")[0];
+  const user = db.query("SELECT * FROM users WHERE user_id = ?").get(userId) as any;
+  if (!user) return { remaining: CONFIG.DEFAULT_DAILY_QUOTA, dailyQuota: CONFIG.DEFAULT_DAILY_QUOTA, isAdmin: false };
+  let usedToday = user.used_today || 0;
+  if (user.last_reset_date !== todayStr) usedToday = 0;
+  const dailyQuota = user.daily_quota || CONFIG.DEFAULT_DAILY_QUOTA;
+  return { remaining: Math.max(0, dailyQuota - usedToday), dailyQuota, isAdmin: false };
+}
+
+export function formatQuotaFooter(userId: number): string {
+  const info = getUserQuotaInfo(userId);
+  if (info.isAdmin) {
+    return "\n\n──────────────\n👑 <b>دسترسی ادمین:</b> <code>نامحدود ⚡</code>";
+  }
+  return `\n\n──────────────\n📊 <b>سهمیه باقی‌مانده امروز:</b> <code>${info.remaining}/${info.dailyQuota}</code>`;
 }
 
 export function approveUser(userId: number, quota = CONFIG.DEFAULT_DAILY_QUOTA) {

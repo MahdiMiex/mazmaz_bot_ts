@@ -2,8 +2,9 @@ import { Context } from "grammy";
 import { askGemini } from "../services/ai";
 import { CONFIG } from "../config";
 import { HttpsProxyAgent } from "https-proxy-agent";
-
 import { markdownToTelegramHtml } from "../utils/formatter";
+import { withTyping, sendSafeMessage } from "../utils/chunker";
+import { formatQuotaFooter, checkAndConsumeQuota } from "../db";
 
 const agent = CONFIG.USE_PROXY ? new HttpsProxyAgent(CONFIG.PROXY_URL) : undefined;
 
@@ -11,58 +12,78 @@ export async function handlePhotoMessage(ctx: Context) {
   const photos = ctx.message?.photo;
   if (!photos || photos.length === 0) return;
 
-  const caption = ctx.message?.caption || "لطفاً این تصویر را با دقت و جزئیات کامل تحلیل و توضیح بده.";
-  const statusMsg = await ctx.reply("👁️‍🗨️ <b>در حال دیدن و تحلیل هوشمند تصویر با مزمز... ⏳</b>", {
-    parse_mode: "HTML",
-  });
+  const userId = ctx.from!.id;
+  const chatType = ctx.chat?.type || "private";
+  const isGroup = chatType === "group" || chatType === "supergroup";
+  const isAdmin = CONFIG.ADMIN_IDS.includes(userId);
 
-  try {
-    // Get highest resolution photo
-    const bestPhoto = photos[photos.length - 1];
-    const file = await ctx.api.getFile(bestPhoto.file_id);
-    const fileUrl = `https://api.telegram.org/file/bot${CONFIG.BOT_TOKEN}/${file.file_path}`;
+  const replyOpts = {
+    reply_parameters: {
+      message_id: ctx.message!.message_id,
+      allow_sending_without_reply: true,
+    },
+  };
 
-    // Download image buffer
-    const imgRes = await fetch(fileUrl, {
-      // @ts-ignore
-      agent,
-    });
+  // فیلتر در گروه‌ها: فقط در صورت ریپلای روی ربات، منشن یا خطاب مستقیم
+  if (isGroup) {
+    const botInfo = ctx.me;
+    const isReplyToBot = ctx.message?.reply_to_message?.from?.id === botInfo.id;
+    const captionLower = (ctx.message?.caption || "").toLowerCase();
+    const isBotMentioned = captionLower.includes(`@${botInfo.username.toLowerCase()}`);
+    const isDirectCall = /^(?:(?:سلام|درود|هی|الو|چطوری)\s+)?(?:مزمز|mazmaz)/i.test(ctx.message?.caption?.trim() || "");
 
-    if (!imgRes.ok) {
-      await ctx.api.editMessageText(
-        ctx.chat!.id,
-        statusMsg.message_id,
-        "❌ خطا در دانلود تصویر از تلگرام."
-      );
+    if (!isReplyToBot && !isBotMentioned && !isDirectCall) {
       return;
     }
 
-    const arrayBuffer = await imgRes.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-
-    const rawAnalysis = await askGemini(ctx.from!.id, caption, base64);
-    const analysis = markdownToTelegramHtml(rawAnalysis);
-
-    try {
-      await ctx.api.editMessageText(
-        ctx.chat!.id,
-        statusMsg.message_id,
-        `🖼️ <b>تحلیل هوشمند تصویر توسط مزمز:</b>\n\n${analysis}`,
-        { parse_mode: "HTML" }
-      );
-    } catch {
-      await ctx.api.editMessageText(
-        ctx.chat!.id,
-        statusMsg.message_id,
-        `🖼️ تحلیل هوشمند تصویر توسط مزمز:\n\n${rawAnalysis}`
-      ).catch(() => {});
+    if (!isAdmin) {
+      const quota = checkAndConsumeQuota(userId, true);
+      if (!quota.allowed) {
+        await ctx.reply(
+          "⚠️ <b>سهمیه پیام امروز شما به پایان رسیده است!</b>\n\n" +
+          "سهمیه روزانه شما بامداد فردا مجدداً شارژ می‌شود. 🌙",
+          {
+            ...replyOpts,
+            parse_mode: "HTML",
+          }
+        );
+        return;
+      }
     }
-  } catch (err: any) {
-    console.error("Photo analysis error:", err);
-    await ctx.api.editMessageText(
-      ctx.chat!.id,
-      statusMsg.message_id,
-      `❌ خطا در تحلیل عکس: ${err.message || err}`
-    );
   }
+
+  const caption = ctx.message?.caption || "لطفاً این تصویر را با دقت و جزئیات کامل تحلیل و توضیح بده.";
+
+  await withTyping(ctx, async () => {
+    try {
+      const bestPhoto = photos[photos.length - 1];
+      const file = await ctx.api.getFile(bestPhoto.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${CONFIG.BOT_TOKEN}/${file.file_path}`;
+
+      const imgRes = await fetch(fileUrl, {
+        // @ts-ignore
+        agent,
+      });
+
+      if (!imgRes.ok) {
+        await ctx.reply("❌ خطا در دانلود تصویر از تلگرام.", replyOpts);
+        return;
+      }
+
+      const arrayBuffer = await imgRes.arrayBuffer();
+      const base64 = Buffer.from(arrayBuffer).toString("base64");
+
+      const rawAnalysis = await askGemini(userId, caption, base64);
+      const analysis = markdownToTelegramHtml(rawAnalysis);
+      const finalMsg = `🖼️ <b>تحلیل هوشمند تصویر توسط مزمز:</b>\n\n${analysis}${formatQuotaFooter(userId)}`;
+
+      await sendSafeMessage(ctx, finalMsg, {
+        ...replyOpts,
+        parse_mode: "HTML",
+      });
+    } catch (err: any) {
+      console.error("Photo analysis error:", err);
+      await ctx.reply(`❌ خطا در تحلیل عکس: ${err.message || err}`, replyOpts);
+    }
+  });
 }
