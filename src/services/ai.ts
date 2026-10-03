@@ -294,6 +294,17 @@ export async function askGemini(userId: number, prompt: string, imageBase64?: st
           required: ["query"],
         },
       },
+      {
+        name: "read_web_link",
+        description: "Browse, scrape and read the live content of any web page URL, GitHub repository, documentation, news article, Reddit post, or tweet. Use whenever a user shares a URL or asks to read a specific website.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            url: { type: Type.STRING, description: "The full http/https web link to browse and read" },
+          },
+          required: ["url"],
+        },
+      },
     ];
 
     if (isAdmin) {

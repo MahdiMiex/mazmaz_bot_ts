@@ -110,3 +110,41 @@ export async function fetchAndAnalyzeLink(
     return `❌ خطا در تحلیل لینک: ${err.message || err}`;
   }
 }
+
+/**
+ * Directly scrapes and extracts clean readable text from a URL for AI tools (without calling askGemini).
+ */
+export async function scrapeWebPageContent(url: string): Promise<string> {
+  try {
+    const cleanUrl = url.trim();
+    if (!/^https?:\/\//i.test(cleanUrl)) return "آدرس وب‌سایت نامعتبر است.";
+
+    const res = await fetch(cleanUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      // @ts-ignore
+      agent,
+    });
+
+    if (!res.ok) return `خطا در باز کردن صفحه: کد وضعیت HTTP ${res.status}`;
+
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    $("script, style, nav, footer, header, noscript, aside, form, svg, iframe").remove();
+
+    const title = $("title").text().trim() || $("h1").first().text().trim() || "بدون عنوان";
+    const bodyText = $("article, main, .content, #content, body")
+      .first()
+      .text()
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 3500);
+
+    return `عنوان صفحه: ${title}\nلینک: ${cleanUrl}\nمحتوای متنی استخراج‌شده از وب:\n${bodyText}`;
+  } catch (err: any) {
+    return `خطا در برقراری ارتباط با وب‌سایت: ${err?.message || err}`;
+  }
+}

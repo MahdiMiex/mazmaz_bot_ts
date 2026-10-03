@@ -1,7 +1,7 @@
 import { getWeather } from "../services/weather";
 import { getCryptoPrices } from "../services/crypto";
 import { queryBenchmark, LMSYS_ARENA_SUMMARY, TOP_HARDWARE_BENCHMARKS } from "../services/benchmarks";
-import { fetchAndAnalyzeLink } from "../services/linkReader";
+import { fetchAndAnalyzeLink, scrapeWebPageContent } from "../services/linkReader";
 import { searchWeb } from "../services/webSearch";
 import { addTask, getTasks, boostUserQuota } from "../db";
 import { runToolWithLogger } from "../utils/toolLogger";
@@ -142,7 +142,7 @@ export async function executeTool(
       }
       case "read_web_link": {
         if (!args.url) return "خطا: آدرس لینک مشخص نشده است.";
-        return await runToolWithLogger("LINK_READER", args.url, () => fetchAndAnalyzeLink(userId, args.url));
+        return await runToolWithLogger("LINK_READER", args.url, () => scrapeWebPageContent(args.url));
       }
       case "manage_tasks": {
         return await runToolWithLogger("TASKS", args.action || "list", async () => {

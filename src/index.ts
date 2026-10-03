@@ -39,6 +39,7 @@ import { getCryptoPrices } from "./services/crypto";
 import { getDollarAndGoldReport } from "./services/currency";
 import { LMSYS_ARENA_SUMMARY, TOP_HARDWARE_BENCHMARKS } from "./services/benchmarks";
 import { testGeminiKey, clearUserHistory } from "./services/ai";
+import { fetchAndAnalyzeLink } from "./services/linkReader";
 
 console.log("🚀 Initializing mazmaz Telegram Bot with Bun & grammY...");
 
@@ -245,6 +246,25 @@ bot.command(["revoke_cmd", "revoke_cmd@mazmazAgentBot"], async (ctx) => {
   }
   setCommandAccess(targetId, false);
   await ctx.reply(`🚫 دسترسی اجرای دستورات اسلش برای کاربر <code>${targetId}</code> لغو شد.`, { parse_mode: "HTML" });
+});
+
+bot.command(["browse", "browse@mazmazAgentBot", "link"], async (ctx) => {
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const url = parts.slice(1).join(" ").trim();
+  if (!url || !/^https?:\/\//i.test(url)) {
+    return ctx.reply(
+      "💡 <b>راهنمای مرورگر وب هوشمند:</b>\n\nبرای مرور و تحلیل صفحات وب، لینک را همراه با دستور ارسال کنید:\n<code>/browse https://example.com</code>\n\nهمچنین می‌توانی هر لینکی را مستقیماً داخل چت بفرستی تا ربات خودکار آن را باز و خلاصه کند! 🌐",
+      { parse_mode: "HTML" }
+    );
+  }
+  const statusMsg = await ctx.reply("🌐 <b>در حال باز کردن و مرور صفحه وب... ⏳</b>", {
+    parse_mode: "HTML",
+    reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
+  });
+  const analysis = await withTyping(ctx, () => fetchAndAnalyzeLink(ctx.from!.id, url));
+  await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, analysis, { parse_mode: "HTML" }).catch(() => {
+    ctx.reply(analysis, { parse_mode: "HTML" });
+  });
 });
 
 bot.command(["set_quota", "set_quota@mazmazAgentBot"], async (ctx) => {
@@ -818,6 +838,7 @@ bot.start({
             { command: "grant_cmd", description: "🔓 اعطای دسترسی اسلش به کاربر" },
             { command: "revoke_cmd", description: "🔒 لغو دسترسی اسلش کاربر" },
             { command: "dollar", description: "💵 قیمت دلار، ارز و طلا با نمودار" },
+            { command: "browse", description: "🌐 مرورگر هوشمند وب و خواندن لینک" },
             { command: "weather", description: "🌤️ وضعیت زنده و پیش‌بینی آب و هوا" },
             { command: "tasks", description: "📋 مدیریت لیست کارها" },
             { command: "stop", description: "🛑 توقف گفتگو و پاکسازی" },
