@@ -20,6 +20,7 @@ import {
   toggleTask,
   deleteTask,
   getStats,
+  setCommandAccess,
 } from "./db";
 import { downloadMedia, cleanupFile } from "./services/mediaDownloader";
 import { getWeather } from "./services/weather";
@@ -177,6 +178,28 @@ bot.command(["admin", "admin@mazmazAgentBot"], async (ctx) => {
     reply_markup: kb,
     parse_mode: "HTML",
   });
+});
+
+bot.command(["grant_cmd", "grant_cmd@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetId = parseInt(parts[1], 10);
+  if (!targetId || isNaN(targetId)) {
+    return ctx.reply("💡 <b>نحوه استفاده:</b>\n<code>/grant_cmd USER_ID</code>", { parse_mode: "HTML" });
+  }
+  setCommandAccess(targetId, true);
+  await ctx.reply(`✅ دسترسی اجرای دستورات اسلش برای کاربر <code>${targetId}</code> فعال شد.`, { parse_mode: "HTML" });
+});
+
+bot.command(["revoke_cmd", "revoke_cmd@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetId = parseInt(parts[1], 10);
+  if (!targetId || isNaN(targetId)) {
+    return ctx.reply("💡 <b>نحوه استفاده:</b>\n<code>/revoke_cmd USER_ID</code>", { parse_mode: "HTML" });
+  }
+  setCommandAccess(targetId, false);
+  await ctx.reply(`🚫 دسترسی اجرای دستورات اسلش برای کاربر <code>${targetId}</code> لغو شد.`, { parse_mode: "HTML" });
 });
 
 
@@ -452,15 +475,28 @@ bot.start({
     console.log(`==========================================\n`);
 
     try {
-      await bot.api.setMyCommands([
-        { command: "start", description: "شروع گفتگو با مزمز" },
-        { command: "stop", description: "توقف یا ریست کردن گفتگو" },
-        { command: "history", description: "پاک کردن تاریخچه چت" },
-        { command: "weather", description: "وضعیت زنده و پیش‌بینی آب و هوا" },
-        { command: "help", description: "راهنمای استفاده و دستورات" },
-        { command: "tasks", description: "مدیریت لیست کارهای روزمره" },
-      ]);
-      console.log("✅ Telegram Bot Commands registered via setMyCommands API!");
+      // لیست کامل و انحصاری دستورات فقط برای رئیس مهدی در تلگرام نمایش داده می‌شود
+      for (const adminId of CONFIG.ADMIN_IDS) {
+        await bot.api.setMyCommands(
+          [
+            { command: "admin", description: "👑 پنل مدیریت و آمار سیستم" },
+            { command: "setkey", description: "🔑 تنظیم کلید هوش مصنوعی" },
+            { command: "broadcast", description: "📢 ارسال پیام همگانی" },
+            { command: "grant_cmd", description: "🔓 اعطای دسترسی اسلش به کاربر" },
+            { command: "revoke_cmd", description: "🔒 لغو دسترسی اسلش کاربر" },
+            { command: "weather", description: "🌤️ وضعیت زنده و پیش‌بینی آب و هوا" },
+            { command: "tasks", description: "📋 مدیریت لیست کارها" },
+            { command: "stop", description: "🛑 توقف گفتگو و پاکسازی" },
+            { command: "history", description: "🧹 پاک کردن حافظه چت" },
+          ],
+          { scope: { type: "chat", chat_id: adminId } }
+        ).catch(() => {});
+      }
+
+      // مخفی کردن منوی دستورات در تمام گروه‌ها و برای سایر کاربران عادی
+      await bot.api.deleteMyCommands({ scope: { type: "all_group_chats" } }).catch(() => {});
+      await bot.api.setMyCommands([], { scope: { type: "default" } }).catch(() => {});
+      console.log("✅ Exclusive Admin Telegram Commands registered for Mehdi only!");
     } catch (e: any) {
       console.warn("⚠️ Could not set bot commands automatically:", e?.message || e);
     }

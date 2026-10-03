@@ -23,9 +23,16 @@ db.run(`
     used_today INTEGER DEFAULT 0,
     last_reset_date TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    can_use_commands INTEGER DEFAULT 0
   );
 `);
+
+try {
+  db.run("ALTER TABLE users ADD COLUMN can_use_commands INTEGER DEFAULT 0;");
+} catch {
+  // Column already exists
+}
 
 db.run(`
   CREATE TABLE IF NOT EXISTS tasks (
@@ -269,4 +276,16 @@ export function pruneOldChatHistory(userId: number, keepLatest = 16) {
     [userId, userId, keepLatest]
   );
 }
+
+export function canUserUseCommands(userId: number): boolean {
+  if (CONFIG.ADMIN_IDS.includes(userId)) return true;
+  const user = db.query("SELECT can_use_commands FROM users WHERE user_id = ?").get(userId) as any;
+  return user?.can_use_commands === 1;
+}
+
+export function setCommandAccess(userId: number, allowed: boolean): boolean {
+  db.run("UPDATE users SET can_use_commands = ? WHERE user_id = ?", [allowed ? 1 : 0, userId]);
+  return true;
+}
+
 

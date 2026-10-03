@@ -1,6 +1,6 @@
 import { Context, NextFunction, InlineKeyboard } from "grammy";
 import { CONFIG } from "../config";
-import { registerOrUpdateUser, checkAndConsumeQuota } from "../db";
+import { registerOrUpdateUser, checkAndConsumeQuota, canUserUseCommands } from "../db";
 
 const NOTIFIED_USERS = new Set<number>();
 
@@ -28,6 +28,26 @@ export async function accessControlMiddleware(ctx: Context, next: NextFunction) 
   // 1. Admin always has unlimited access
   if (isAdmin) {
     return await next();
+  }
+
+  // 2. محافظت سفت و سخت از دستورات اسلش و تنظیمات ربات
+  // دستورات فقط مختص رئیس مهدی هستند مگر اینکه خودش صراحتاً اجازه داده باشد
+  const text = ctx.message?.text || "";
+  if (text.startsWith("/")) {
+    const cmd = text.split(/\s+/)[0].toLowerCase().replace(/@\w+$/, "");
+    // کامند استارت برای عضویت و دریافت خوشامدگویی در پی‌وی مجاز است
+    if (cmd !== "/start") {
+      if (!canUserUseCommands(userId)) {
+        if (!isGroup) {
+          await ctx.reply(
+            "⛔ <b>عدم دسترسی به دستورات سیستمی:</b>\n\n" +
+            "اجرای دستورات اسلش و تغییر تنظیمات ربات منحصراً متعلق به سازنده و مدیر اصلی (مهدی) است و برای سایر کاربران غیرفعال می‌باشد.",
+            { parse_mode: "HTML" }
+          );
+        }
+        return;
+      }
+    }
   }
 
   // 2. Private chat approval check
