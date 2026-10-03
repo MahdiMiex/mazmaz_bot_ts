@@ -409,16 +409,24 @@ async function renderUserLogsView(ctx: any, targetId: number, count = 15, isEdit
 
 async function renderAdminGroups(ctx: any, isEdit = false) {
   const groups = getAllGroups();
-  let text = "👥 <b>لیست و مدیریت گروه‌های ربات:</b>\n\n";
+  let text = "👥 <b>لیست و نظارت بر گروه‌های مزمز:</b>\n\n";
 
   if (groups.length === 0) {
-    text += "<i>ربات در حال حاضر در هیچ گروهی عضو نیست یا گروهی ثبت نشده است.</i>";
+    text += (
+      `<i>هنوز گروهی در دیتابیس ثبت نشده است.</i>\n\n` +
+      `💡 <b>چرا گروه‌های قبلی هنوز در لیست نیستند؟</b>\n` +
+      `طبق معماری امنیتی تلگرام، ربات‌ها (برعکس کاربران عادی) متدی برای خواندن یک‌جای لیست گروه‌های گذشته خود ندارند (Telegram Bot API فاقد متد <code>getChats</code> است).\n\n` +
+      `🚀 <b>۳ روش فوق‌العاده سریع برای ثبت و دیدن گروه‌ها:</b>\n` +
+      `۱️⃣ <b>سریع‌ترین راه (فوروارد):</b> کافیست یک پیام از گروه موردنظر را به همین پی‌وی ربات فوروارد کنید تا درجا شناسایی و فعال شود!\n` +
+      `۲️⃣ <b>ارسال پیام در گروه:</b> با ارسال یک پیام، صدا زدن <code>مزمز</code> یا یک دستور در گروه، ربات آن را خودکار ثبت می‌کند.\n` +
+      `۳️⃣ <b>دستور دستی:</b> با دستور <code>/addgroup &lt;chat_id&gt;</code> گروه را بر اساس آیدی عددی ثبت کنید.`
+    );
   } else {
     for (const g of groups.slice(0, 10)) {
       const statusIcon = g.status === "approved" ? "✅ تایید شده" : g.status === "pending" ? "⏳ در انتظار تایید" : "🚪 خارج شده";
       text += `• <b>${escapeHtml(g.title)}</b>\n  آیدی: <code>${g.chat_id}</code> | وضعیت: <b>${statusIcon}</b>\n`;
       if (g.added_by_name) {
-        text += `  اضافه شده توسط: ${escapeHtml(g.added_by_name)} (${g.added_by_username ? `@${g.added_by_username}` : `<code>${g.added_by_id}</code>`})\n`;
+        text += `  ثبت‌کننده: ${escapeHtml(g.added_by_name)} (${g.added_by_username ? `@${g.added_by_username}` : `<code>${g.added_by_id}</code>`})\n`;
       }
       text += "\n";
     }
@@ -429,6 +437,7 @@ async function renderAdminGroups(ctx: any, isEdit = false) {
     const icon = g.status === "approved" ? "✅" : g.status === "pending" ? "⏳" : "🚪";
     kb.text(`${icon} ${g.title.slice(0, 20)}`, `grp_detail:${g.chat_id}`).row();
   }
+  kb.text("🔄 به‌روزرسانی لیست", "admin_groups");
   kb.text("🔙 بازگشت به پنل ادمین", "menu_admin");
 
   if (isEdit) {
@@ -462,6 +471,70 @@ bot.command(["groups", "groups@mazmazAgentBot"], async (ctx) => {
     return ctx.reply("⛔ دسترسی غیرمجاز. این بخش فقط مختص رئیس مهدی است.");
   }
   return await renderAdminGroups(ctx);
+});
+
+bot.command(["addgroup", "addgroup@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
+    return ctx.reply("⛔ این دستور منحصراً متعلق به رئیس مهدی است.");
+  }
+
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetIdStr = parts[1];
+  const customTitle = parts.slice(2).join(" ");
+
+  if (!targetIdStr) {
+    return ctx.reply(
+      `💡 <b>راهنمای ثبت دستی گروه:</b>\n\n` +
+      `کافیست آیدی عددی گروه (معمولاً با <code>-100</code> شروع می‌شود) را وارد کنید:\n` +
+      `<code>/addgroup -1001234567890 [عنوان دلخواه]</code>\n\n` +
+      `<i>نکته: سریع‌ترین راه اینه که یه پیام از گروه رو به پی‌وی من فوروارد کنی تا درجا ثبت بشه!</i>`,
+      { parse_mode: "HTML" }
+    );
+  }
+
+  const chatId = parseInt(targetIdStr, 10);
+  if (isNaN(chatId)) {
+    return ctx.reply("⚠️ آیدی عددی گروه نامعتبر است. آیدی گروه‌ها معمولاً عددی منفی هستند.", { parse_mode: "HTML" });
+  }
+
+  let finalTitle = customTitle;
+  let chatType = "supergroup";
+
+  // استعلام زنده مشخصات گروه از API تلگرام
+  try {
+    const chatInfo = (await ctx.api.getChat(chatId)) as any;
+    if (chatInfo.title && !customTitle) {
+      finalTitle = chatInfo.title;
+    }
+    if (chatInfo.type) {
+      chatType = chatInfo.type;
+    }
+  } catch (e: any) {
+    console.warn(`Could not fetch chat info for ${chatId}:`, e?.message);
+  }
+
+  registerOrUpdateGroup(
+    chatId,
+    finalTitle || `گروه ${chatId}`,
+    chatType,
+    ctx.from!.id,
+    "رئیس مهدی (ثبت دستی)",
+    ctx.from?.username || "",
+    "approved"
+  );
+
+  const kb = new InlineKeyboard()
+    .text("👥 لیست گروه‌ها", "admin_groups")
+    .text("🔍 جزئیات این گروه", `grp_detail:${chatId}`);
+
+  await ctx.reply(
+    `✅ <b>گروه با موفقیت ثبت و تایید شد!</b>\n\n` +
+    `• عنوان گروه: <b>${escapeHtml(finalTitle || String(chatId))}</b>\n` +
+    `• آیدی عددی: <code>${chatId}</code>\n` +
+    `• نوع چت: <code>${chatType}</code>\n` +
+    `• وضعیت: ✅ <b>فعال و تایید شده</b>`,
+    { reply_markup: kb, parse_mode: "HTML" }
+  );
 });
 
 bot.command(["logs", "logs@mazmazAgentBot", "userlogs"], async (ctx) => {
@@ -612,6 +685,57 @@ bot.command(["reply_user", "reply_user@mazmazAgentBot"], async (ctx) => {
 });
 
 
+
+// 2.5 تشخیص هوشمند فوروارد پیام از گروه به پی‌وی توسط رئیس مهدی جهت ثبت و فعال‌سازی فوری گروه
+bot.on("message", async (ctx, next) => {
+  const isPrivate = ctx.chat?.type === "private";
+  const userId = ctx.from?.id;
+  const isAdmin = userId && CONFIG.ADMIN_IDS.includes(userId);
+
+  if (isAdmin && isPrivate && ctx.message) {
+    const msg = ctx.message as any;
+    let forwardChat = msg.forward_from_chat;
+    if (!forwardChat && msg.forward_origin && typeof msg.forward_origin === "object") {
+      if (msg.forward_origin.type === "chat" || msg.forward_origin.type === "channel") {
+        forwardChat = msg.forward_origin.chat;
+      }
+    }
+
+    if (forwardChat && (forwardChat.type === "group" || forwardChat.type === "supergroup" || forwardChat.type === "channel")) {
+      const chatId = forwardChat.id;
+      const title = forwardChat.title || "گروه بدون عنوان";
+
+      registerOrUpdateGroup(
+        chatId,
+        title,
+        forwardChat.type,
+        userId,
+        "رئیس مهدی (ثبت با فوروارد)",
+        ctx.from?.username || "",
+        "approved"
+      );
+
+      const kb = new InlineKeyboard()
+        .text("👥 مشاهده در لیست گروه‌ها", "admin_groups")
+        .row()
+        .text("🔍 جزئیات این گروه", `grp_detail:${chatId}`)
+        .text("🚪 خروج از این گروه", `grp_leave:${chatId}`);
+
+      await ctx.reply(
+        `🎉 <b>گروه با موفقیت شناسایی و ثبت شد!</b>\n\n` +
+        `• عنوان گروه: <b>${escapeHtml(title)}</b>\n` +
+        `• آیدی عددی: <code>${chatId}</code>\n` +
+        `• نوع چت: <code>${forwardChat.type}</code>\n` +
+        `• وضعیت: ✅ <b>تایید شده و فعال</b>\n\n` +
+        `این گروه به دیتابیس افزوده شد و اکنون در منوی /groups قابل مدیریت است! 🚀`,
+        { reply_markup: kb, parse_mode: "HTML" }
+      );
+      return;
+    }
+  }
+
+  await next();
+});
 
 // 3. Register Photo & Vision Handler
 bot.on("message:photo", handlePhotoMessage);
@@ -1148,6 +1272,7 @@ bot.callbackQuery(/^grp_detail:(\-?\d+)$/, async (ctx) => {
   if (g.status !== "approved") {
     kb.text("✅ تایید عضویت", `grp_accept:${g.chat_id}`).row();
   }
+  kb.text("🔄 استعلام وضعیت زنده از تلگرام", `grp_sync:${g.chat_id}`).row();
   if (g.status !== "left") {
     kb.text("🚪 خروج از گروه (Leave)", `grp_leave:${g.chat_id}`).row();
   }
@@ -1155,6 +1280,51 @@ bot.callbackQuery(/^grp_detail:(\-?\d+)$/, async (ctx) => {
 
   await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
   await ctx.answerCallbackQuery();
+});
+
+bot.callbackQuery(/^grp_sync:(\-?\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const chatId = parseInt(ctx.match[1], 10);
+  try {
+    const chat = (await ctx.api.getChat(chatId)) as any;
+    const title = chat.title || "گروه";
+    registerOrUpdateGroup(chatId, title, chat.type);
+
+    let role = "عضو";
+    try {
+      const member = await ctx.api.getChatMember(chatId, ctx.me.id);
+      role = member.status === "administrator" ? "👑 مدیر (Admin)" : member.status === "member" ? "👤 عضو عادی (Member)" : member.status;
+    } catch {}
+
+    const g = getGroupById(chatId);
+    const statusText = g?.status === "approved" ? "✅ تایید شده و فعال" : g?.status === "pending" ? "⏳ در انتظار تایید" : "🚪 خارج شده";
+
+    const text = (
+      `👥 <b>اطلاعات گروه (به‌روزرسانی شده از تلگرام):</b>\n\n` +
+      `• عنوان گروه: <b>${escapeHtml(g?.title || title)}</b>\n` +
+      `• آیدی گروه: <code>${chatId}</code>\n` +
+      `• نوع چت: <code>${chat.type}</code>\n` +
+      `• نقش ربات در گروه: <b>${role}</b>\n` +
+      `• وضعیت فعالیت: <b>${statusText}</b>\n` +
+      `• اضافه کننده: <b>${escapeHtml(g?.added_by_name || "نامشخص")}</b>\n` +
+      `• تاریخ ثبت: <code>${g?.created_at || "نامشخص"}</code>\n`
+    );
+
+    const kb = new InlineKeyboard();
+    if (g?.status !== "approved") {
+      kb.text("✅ تایید عضویت", `grp_accept:${chatId}`).row();
+    }
+    kb.text("🔄 استعلام مجدد از تلگرام", `grp_sync:${chatId}`).row();
+    if (g?.status !== "left") {
+      kb.text("🚪 خروج از گروه (Leave)", `grp_leave:${chatId}`).row();
+    }
+    kb.text("🔙 بازگشت به لیست گروه‌ها", "admin_groups");
+
+    await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+    await ctx.answerCallbackQuery({ text: `همگام‌سازی شد! عنوان: ${title} | نقش ربات: ${role}` });
+  } catch (e: any) {
+    await ctx.answerCallbackQuery({ text: `خطا در دریافت وضعیت از تلگرام: ${e?.message || e}`, show_alert: true });
+  }
 });
 
 bot.callbackQuery(/^grp_accept:(\-?\d+)$/, async (ctx) => {
@@ -1227,6 +1397,7 @@ bot.start({
           [
             { command: "admin", description: "👑 پنل مدیریت و آمار سیستم" },
             { command: "groups", description: "👥 مدیریت و نظارت بر گروه‌ها" },
+            { command: "addgroup", description: "➕ ثبت دستی گروه با آیدی" },
             { command: "logs", description: "📜 مشاهده لاگ پیام‌ها و گفتگوهای کاربران" },
             { command: "set_quota", description: "🔢 تنظیم سهمیه روزانه کاربر" },
             { command: "add_quota", description: "➕ افزایش سهمیه کاربر" },

@@ -1,6 +1,16 @@
 import { Context, NextFunction, InlineKeyboard } from "grammy";
 import { CONFIG } from "../config";
-import { registerOrUpdateUser, checkAndConsumeQuota, canUserUseCommands, isUserBanned, isUserMuted, isGroupApproved } from "../db";
+import {
+  registerOrUpdateUser,
+  checkAndConsumeQuota,
+  canUserUseCommands,
+  isUserBanned,
+  isUserMuted,
+  isGroupApproved,
+  getGroupById,
+  registerOrUpdateGroup,
+} from "../db";
+import { escapeHtml } from "../utils/formatter";
 
 const NOTIFIED_USERS = new Set<number>();
 
@@ -21,6 +31,61 @@ export async function accessControlMiddleware(ctx: Context, next: NextFunction) 
     ctx.callbackQuery?.data?.startsWith("grp_")
   ) {
     return await next();
+  }
+
+  // 0. Auto-discovery and registration for groups
+  if (isGroup && ctx.chat) {
+    const chatId = ctx.chat.id;
+    const existingGroup = getGroupById(chatId);
+    const addedByName = `${user.first_name || ""} ${user.last_name || ""}`.trim() || "نامشخص";
+    const username = user.username || "";
+
+    if (!existingGroup) {
+      // If message is from admin (Mehdi), immediately approve group
+      const initialStatus = isAdmin ? "approved" : "pending";
+      registerOrUpdateGroup(
+        chatId,
+        ctx.chat.title || "گروه بدون عنوان",
+        chatType,
+        userId,
+        addedByName,
+        username,
+        initialStatus
+      );
+
+      // If discovered from non-admin message, alert admin with inline buttons
+      if (!isAdmin) {
+        for (const adminId of CONFIG.ADMIN_IDS) {
+          const kb = new InlineKeyboard()
+            .text("✅ تایید و فعال‌سازی", `grp_accept:${chatId}`)
+            .text("🚪 خروج از گروه", `grp_leave:${chatId}`);
+
+          const alertText = (
+            `🚨 <b>شناسایی خودکار گروه جدید!</b>\n\n` +
+            `ربات در گروهی فعالیت دریافت کرد که قبلاً در پایگاه داده ثبت نشده بود:\n\n` +
+            `👥 <b>مشخصات گروه:</b>\n` +
+            `• عنوان گروه: <b>${escapeHtml(ctx.chat.title || "بدون عنوان")}</b>\n` +
+            `• آیدی گروه: <code>${chatId}</code>\n` +
+            `• نوع چت: <code>${chatType}</code>\n\n` +
+            `👤 <b>کاربر ارسال‌کننده:</b>\n` +
+            `• نام: <b>${escapeHtml(addedByName)}</b>\n` +
+            `• یوزرنیم: ${username ? `@${username}` : "<i>ندارد</i>"}\n` +
+            `• آیدی عددی: <code>${userId}</code>\n\n` +
+            `رئیس مهدی عزیز، آیا اجازه فعالیت ربات در این گروه را صادر می‌کنید؟`
+          );
+
+          ctx.api.sendMessage(adminId, alertText, {
+            reply_markup: kb,
+            parse_mode: "HTML",
+          }).catch((e) => console.warn("Failed to notify admin of group auto-discovery:", e?.message));
+        }
+      }
+    } else {
+      // Update group title if it changed in Telegram
+      if (ctx.chat.title && ctx.chat.title !== existingGroup.title) {
+        registerOrUpdateGroup(chatId, ctx.chat.title, chatType);
+      }
+    }
   }
 
   const userState = registerOrUpdateUser(
@@ -46,7 +111,7 @@ export async function accessControlMiddleware(ctx: Context, next: NextFunction) 
     if (isBotCalled) {
       await ctx.reply(
         `⚠️ <b>گروه در انتظار تایید مدیریت:</b>\n\n` +
-        `فعالیت مزمز در این گروه نیازمند تایید سازنده و مدیر اصلی (@${CONFIG.CREATOR_USERNAME}) است. درخواست عضویت ثبت شده و پس از بررسی و تایید رئیس، ربات در خدمت شما خواهد بود ☕️`,
+        `فعالیت مزمز در این گروه نیازمند تایید سازنده و مدیر اصلی (@${CONFIG.CREATOR_USERNAME}) است. مشخصات این گروه برای رئیس مهدی ارسال شد و پس از بررسی و تایید ایشان در خدمت شما خواهم بود ☕️`,
         {
           parse_mode: "HTML",
           reply_parameters: ctx.message?.message_id

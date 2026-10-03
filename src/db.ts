@@ -527,21 +527,26 @@ export function registerOrUpdateGroup(
   addedById = 0,
   addedByName = "",
   addedByUsername = "",
-  status: "pending" | "approved" | "rejected" | "left" = "pending"
+  status?: "pending" | "approved" | "rejected" | "left"
 ) {
   const existing = db.query("SELECT * FROM groups WHERE chat_id = ?").get(chatId) as any;
   if (!existing) {
+    const finalStatus = status || "pending";
     db.run(
       `INSERT INTO groups (chat_id, title, type, added_by_id, added_by_name, added_by_username, status)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [chatId, title, type, addedById, addedByName, addedByUsername, status]
+      [chatId, title, type, addedById, addedByName, addedByUsername, finalStatus]
     );
   } else {
+    const finalStatus = status !== undefined ? status : existing.status;
+    const finalAddedById = addedById !== 0 ? addedById : existing.added_by_id;
+    const finalAddedByName = addedByName ? addedByName : existing.added_by_name;
+    const finalAddedByUsername = addedByUsername ? addedByUsername : existing.added_by_username;
     db.run(
       `UPDATE groups 
        SET title = ?, type = ?, added_by_id = ?, added_by_name = ?, added_by_username = ?, status = ?, updated_at = CURRENT_TIMESTAMP
        WHERE chat_id = ?`,
-      [title, type, addedById, addedByName, addedByUsername, status, chatId]
+      [title || existing.title, type || existing.type, finalAddedById, finalAddedByName, finalAddedByUsername, finalStatus, chatId]
     );
   }
 }
