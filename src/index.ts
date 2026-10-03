@@ -22,7 +22,16 @@ import {
   getStats,
   setCommandAccess,
   formatQuotaFooter,
+  muteUser,
+  unmuteUser,
+  isUserMuted,
+  banUser,
+  unbanUser,
+  isUserBanned,
+  setUserQuota,
+  addQuota,
 } from "./db";
+import { ADMIN_REPLY_TARGET } from "./services/feedback";
 import { sendSafeMessage, withTyping } from "./utils/chunker";
 import { downloadMedia, cleanupFile } from "./services/mediaDownloader";
 import { getWeather } from "./services/weather";
@@ -238,6 +247,97 @@ bot.command(["revoke_cmd", "revoke_cmd@mazmazAgentBot"], async (ctx) => {
   await ctx.reply(`🚫 دسترسی اجرای دستورات اسلش برای کاربر <code>${targetId}</code> لغو شد.`, { parse_mode: "HTML" });
 });
 
+bot.command(["set_quota", "set_quota@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetId = parseInt(parts[1], 10);
+  const quota = parseInt(parts[2], 10);
+  if (!targetId || isNaN(targetId) || isNaN(quota)) {
+    return ctx.reply("💡 <b>نحوه استفاده:</b>\n<code>/set_quota USER_ID QUOTA</code>\nمثال:\n<code>/set_quota 8288566582 50</code>", { parse_mode: "HTML" });
+  }
+  setUserQuota(targetId, quota);
+  await ctx.reply(`✅ سهمیه روزانه کاربر <code>${targetId}</code> به <b>${quota}</b> پیام تغییر یافت.`, { parse_mode: "HTML" });
+});
+
+bot.command(["add_quota", "add_quota@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetId = parseInt(parts[1], 10);
+  const amount = parseInt(parts[2], 10);
+  if (!targetId || isNaN(targetId) || isNaN(amount)) {
+    return ctx.reply("💡 <b>نحوه استفاده:</b>\n<code>/add_quota USER_ID AMOUNT</code>\nمثال:\n<code>/add_quota 8288566582 20</code>", { parse_mode: "HTML" });
+  }
+  const newQuota = addQuota(targetId, amount);
+  await ctx.reply(`✅ سهمیه کاربر <code>${targetId}</code> به میزان <b>${amount}</b> افزایش یافت. (سهمیه جدید: <b>${newQuota}</b>)`, { parse_mode: "HTML" });
+});
+
+bot.command(["mute", "mute@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetId = parseInt(parts[1], 10);
+  const hours = parseInt(parts[2], 10) || 6;
+  const reason = parts.slice(3).join(" ") || "دستور مستقیم مدیریت";
+  if (!targetId || isNaN(targetId)) {
+    return ctx.reply("💡 <b>نحوه استفاده:</b>\n<code>/mute USER_ID [HOURS] [REASON]</code>\nمثال:\n<code>/mute 8288566582 6 بی احترامی</code>", { parse_mode: "HTML" });
+  }
+  const res = muteUser(targetId, hours, reason);
+  await ctx.reply(`⏳ کاربر <code>${targetId}</code> به مدت <b>${hours} ساعت</b> (تا <code>${res.untilStr}</code>) میوت شد.\nدلیل: <i>${reason}</i>`, { parse_mode: "HTML" });
+});
+
+bot.command(["unmute", "unmute@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetId = parseInt(parts[1], 10);
+  if (!targetId || isNaN(targetId)) {
+    return ctx.reply("💡 <b>نحوه استفاده:</b>\n<code>/unmute USER_ID</code>", { parse_mode: "HTML" });
+  }
+  unmuteUser(targetId);
+  await ctx.reply(`✅ محدودیت میوت کاربر <code>${targetId}</code> لغو شد.`, { parse_mode: "HTML" });
+});
+
+bot.command(["ban", "ban@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetId = parseInt(parts[1], 10);
+  if (!targetId || isNaN(targetId)) {
+    return ctx.reply("💡 <b>نحوه استفاده:</b>\n<code>/ban USER_ID</code>", { parse_mode: "HTML" });
+  }
+  banUser(targetId);
+  await ctx.reply(`🚫 کاربر <code>${targetId}</code> برای همیشه مسدود (بن) شد.`, { parse_mode: "HTML" });
+});
+
+bot.command(["unban", "unban@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetId = parseInt(parts[1], 10);
+  if (!targetId || isNaN(targetId)) {
+    return ctx.reply("💡 <b>نحوه استفاده:</b>\n<code>/unban USER_ID</code>", { parse_mode: "HTML" });
+  }
+  unbanUser(targetId);
+  await ctx.reply(`✅ کاربر <code>${targetId}</code> از حالت مسدودسازی خارج شد.`, { parse_mode: "HTML" });
+});
+
+bot.command(["reply_user", "reply_user@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetId = parseInt(parts[1], 10);
+  const msgText = parts.slice(2).join(" ");
+  if (!targetId || isNaN(targetId)) {
+    return ctx.reply("💡 <b>نحوه استفاده:</b>\n<code>/reply_user USER_ID متن پیام</code>", { parse_mode: "HTML" });
+  }
+  if (!msgText) {
+    ADMIN_REPLY_TARGET.set(ctx.from!.id, targetId);
+    return ctx.reply(`✍️ لطفاً پیام خود را برای کاربر <code>${targetId}</code> ارسال کنید تا فوراً برایش ارسال شود.`, { parse_mode: "HTML" });
+  }
+  try {
+    await ctx.api.sendMessage(targetId, `📩 <b>پیام از طرف مدیریت:</b>\n\n${msgText}`, { parse_mode: "HTML" });
+    await ctx.reply(`✅ پیام به کاربر <code>${targetId}</code> ارسال شد!`, { parse_mode: "HTML" });
+  } catch (e: any) {
+    await ctx.reply(`❌ خطا در ارسال پیام به کاربر: ${e?.message || e}`);
+  }
+});
+
+
 
 // 3. Register Photo & Vision Handler
 bot.on("message:photo", handlePhotoMessage);
@@ -289,6 +389,73 @@ bot.callbackQuery("ignore_alert", async (ctx) => {
   }).catch(() => {});
   await ctx.answerCallbackQuery({ text: "گزارش نادیده گرفته شد." }).catch(() => {});
 });
+
+bot.callbackQuery(/^mute_u:(\d+):(\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const hours = parseInt(ctx.match[1], 10);
+  const targetId = parseInt(ctx.match[2], 10);
+  const res = muteUser(targetId, hours, "استفاده از الفاظ نامناسب و نقض قوانین");
+  await ctx.editMessageText(
+    `⏳ <b>کاربر <code>${targetId}</code> به مدت ${hours} ساعت با موفقیت میوت شد!</b>\n` +
+      `📅 مهلت محرومیت تا: <code>${res.untilStr}</code>\n` +
+      `👤 ثبت کننده: <b>مهدی</b>`,
+    { parse_mode: "HTML" }
+  ).catch(() => {});
+  await ctx.answerCallbackQuery({ text: `کاربر ${hours} ساعت میوت شد.` }).catch(() => {});
+});
+
+bot.callbackQuery(/^unmute_u:(\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const targetId = parseInt(ctx.match[1], 10);
+  unmuteUser(targetId);
+  await ctx.editMessageText(`✅ <b>کاربر <code>${targetId}</code> با موفقیت آن‌میوت شد.</b>`, {
+    parse_mode: "HTML",
+  }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "محدودیت کاربر لغو شد." }).catch(() => {});
+});
+
+bot.callbackQuery(/^ban_u:(\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const targetId = parseInt(ctx.match[1], 10);
+  banUser(targetId);
+  await ctx.editMessageText(
+    `🚫 <b>کاربر <code>${targetId}</code> برای همیشه مسدود (بن) شد.</b>\nدیگر اجازه هیچ‌گونه استفاده از ربات را ندارد.`,
+    { parse_mode: "HTML" }
+  ).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "کاربر مسدود شد." }).catch(() => {});
+});
+
+bot.callbackQuery(/^unban_u:(\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const targetId = parseInt(ctx.match[1], 10);
+  unbanUser(targetId);
+  await ctx.editMessageText(`✅ <b>کاربر <code>${targetId}</code> از مسدودسازی خارج شد.</b>`, {
+    parse_mode: "HTML",
+  }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "کاربر آن‌بن شد." }).catch(() => {});
+});
+
+bot.callbackQuery(/^reply_u:(\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const targetId = parseInt(ctx.match[1], 10);
+  ADMIN_REPLY_TARGET.set(ctx.from!.id, targetId);
+  await ctx.reply(
+    `✍️ <b>حالت ارسال پاسخ به کاربر <code>${targetId}</code> فعال شد:</b>\n\n` +
+      `متن پاسخ خود را به عنوان پیام بعدی در همین چت ارسال کنید تا مستقیماً به پی‌وی کاربر فرستاده شود.`,
+    { parse_mode: "HTML" }
+  );
+  await ctx.answerCallbackQuery({ text: "آماده دریافت پیام شما..." }).catch(() => {});
+});
+
+bot.callbackQuery("ack_report", async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const originalText = ctx.callbackQuery.message?.text || "";
+  await ctx.editMessageText(`${originalText}\n\n✅ <i>گزارش توسط رئیس مهدی بررسی شد.</i>`, {
+    parse_mode: "HTML",
+  }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "بررسی شد." }).catch(() => {});
+});
+
 
 
 
@@ -525,18 +692,104 @@ bot.callbackQuery("admin_users", async (ctx) => {
   if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
   const users = getAllUsers();
 
-  const lines = ["👥 <b>لیست کاربران ربات و وضعیت سهمیه:</b>\n"];
-  for (const u of users.slice(0, 15)) {
-    const appr = u.is_approved ? "✅ مجاز" : "⏳ در انتظار";
-    const uname = u.username ? `@${u.username}` : "بدون یوزرنیم";
-    lines.push(
-      `• <b>${u.first_name}</b> (${uname}) - <code>${u.user_id}</code>\n  وضعیت: ${appr} | مصرف امروز: ${u.used_today}/${u.daily_quota}\n`
-    );
+  const lines = [
+    "👥 <b>مدیریت کاربران و سهمیه‌ها:</b>\nبرای ویرایش سهمیه، میوت یا بن کردن، کاربر مورد نظر را انتخاب کنید:\n",
+  ];
+  const kb = new InlineKeyboard();
+
+  for (const u of users.slice(0, 12)) {
+    const appr = u.is_approved ? "✅" : "⏳";
+    const banned = u.is_banned ? "🚫" : "";
+    const name = `${u.first_name || ""} ${u.username ? `(@${u.username})` : ""}`.trim() || String(u.user_id);
+    lines.push(`• ${banned}${appr} <b>${name}</b> (سهمیه: ${u.daily_quota} | امروز: ${u.used_today})`);
+    kb.text(`${banned}${appr} ${name.slice(0, 20)}`, `u_detail:${u.user_id}`).row();
   }
 
-  const kb = new InlineKeyboard().text("🔙 بازگشت به پنل ادمین", "menu_admin");
-  await ctx.editMessageText(lines.join("\n"), { reply_markup: kb, parse_mode: "HTML" });
+  kb.text("🔙 بازگشت به پنل ادمین", "menu_admin");
+  await ctx.editMessageText(lines.join("\n"), { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
   await ctx.answerCallbackQuery();
+});
+
+bot.callbackQuery(/^u_detail:(\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const targetId = parseInt(ctx.match[1], 10);
+  const u = getUserById(targetId);
+  if (!u) {
+    return ctx.answerCallbackQuery({ text: "کاربر یافت نشد!" });
+  }
+
+  const muteStatus = isUserMuted(targetId);
+  const banned = isUserBanned(targetId);
+  const uname = u.username ? `@${u.username}` : "ندارد";
+
+  const text = (
+    `👤 <b>پروفایل مدیریتی کاربر:</b>\n\n` +
+    `• نام: <b>${u.first_name} ${u.last_name || ""}</b>\n` +
+    `• یوزرنیم: <b>${uname}</b>\n` +
+    `• آیدی عددی: <code>${u.user_id}</code>\n` +
+    `• وضعیت تایید: ${u.is_approved ? "✅ تایید شده" : "⏳ در انتظار"}\n` +
+    `• وضعیت محدودیت: ${banned ? "🚫 مسدود (بن دائم)" : (muteStatus.isMuted ? `⏳ میوت تا ${muteStatus.untilStr}` : "🟢 فعال")}\n` +
+    `• سهمیه روزانه: <b>${u.daily_quota}</b> پیام\n` +
+    `• مصرف امروز: <b>${u.used_today}</b> پیام\n` +
+    `• آخرین فعالیت: <code>${u.last_active}</code>\n`
+  );
+
+  const kb = new InlineKeyboard()
+    .text("➕ ۱۰ سهمیه", `q_add:${targetId}:10`)
+    .text("➕ ۵۰ سهمیه", `q_add:${targetId}:50`)
+    .row()
+    .text("⏳ میوت ۶ ساعته", `mute_u:6:${targetId}`)
+    .text("⏳ میوت ۲۴ ساعته", `mute_u:24:${targetId}`)
+    .row()
+    .text(muteStatus.isMuted ? "🔊 رفع میوت" : "🔊 آن‌میوت", `unmute_u:${targetId}`)
+    .text(banned ? "🟢 رفع بن" : "🚫 بن کامل", banned ? `unban_u:${targetId}` : `ban_u:${targetId}`)
+    .row()
+    .text("💬 ارسال پیام اختصاصی", `reply_u:${targetId}`)
+    .text("🔙 بازگشت به لیست", "admin_users");
+
+  await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery();
+});
+
+bot.callbackQuery(/^q_add:(\d+):(\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const targetId = parseInt(ctx.match[1], 10);
+  const amount = parseInt(ctx.match[2], 10);
+  const newQuota = addQuota(targetId, amount);
+  await ctx.answerCallbackQuery({ text: `✅ سهمیه به ${newQuota} افزایش یافت.` }).catch(() => {});
+
+  const u = getUserById(targetId);
+  if (!u) return;
+  const muteStatus = isUserMuted(targetId);
+  const banned = isUserBanned(targetId);
+  const uname = u.username ? `@${u.username}` : "ندارد";
+
+  const text = (
+    `👤 <b>پروفایل مدیریتی کاربر:</b>\n\n` +
+    `• نام: <b>${u.first_name} ${u.last_name || ""}</b>\n` +
+    `• یوزرنیم: <b>${uname}</b>\n` +
+    `• آیدی عددی: <code>${u.user_id}</code>\n` +
+    `• وضعیت تایید: ${u.is_approved ? "✅ تایید شده" : "⏳ در انتظار"}\n` +
+    `• وضعیت محدودیت: ${banned ? "🚫 مسدود (بن دائم)" : (muteStatus.isMuted ? `⏳ میوت تا ${muteStatus.untilStr}` : "🟢 فعال")}\n` +
+    `• سهمیه روزانه: <b>${u.daily_quota}</b> پیام\n` +
+    `• مصرف امروز: <b>${u.used_today}</b> پیام\n` +
+    `• آخرین فعالیت: <code>${u.last_active}</code>\n`
+  );
+
+  const kb = new InlineKeyboard()
+    .text("➕ ۱۰ سهمیه", `q_add:${targetId}:10`)
+    .text("➕ ۵۰ سهمیه", `q_add:${targetId}:50`)
+    .row()
+    .text("⏳ میوت ۶ ساعته", `mute_u:6:${targetId}`)
+    .text("⏳ میوت ۲۴ ساعته", `mute_u:24:${targetId}`)
+    .row()
+    .text(muteStatus.isMuted ? "🔊 رفع میوت" : "🔊 آن‌میوت", `unmute_u:${targetId}`)
+    .text(banned ? "🟢 رفع بن" : "🚫 بن کامل", banned ? `unban_u:${targetId}` : `ban_u:${targetId}`)
+    .row()
+    .text("💬 ارسال پیام اختصاصی", `reply_u:${targetId}`)
+    .text("🔙 بازگشت به لیست", "admin_users");
+
+  await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
 });
 
 // Launch bot!
@@ -553,10 +806,18 @@ bot.start({
         await bot.api.setMyCommands(
           [
             { command: "admin", description: "👑 پنل مدیریت و آمار سیستم" },
+            { command: "set_quota", description: "🔢 تنظیم سهمیه روزانه کاربر" },
+            { command: "add_quota", description: "➕ افزایش سهمیه کاربر" },
+            { command: "mute", description: "⏳ میوت کردن کاربر (با ساعت و دلیل)" },
+            { command: "unmute", description: "🔊 رفع میوت کاربر" },
+            { command: "ban", description: "🚫 مسدودسازی کامل (بن) کاربر" },
+            { command: "unban", description: "🟢 رفع مسدودسازی کاربر" },
+            { command: "reply_user", description: "💬 ارسال پیام مستقیم به کاربر" },
             { command: "setkey", description: "🔑 تنظیم کلید هوش مصنوعی" },
             { command: "broadcast", description: "📢 ارسال پیام همگانی" },
             { command: "grant_cmd", description: "🔓 اعطای دسترسی اسلش به کاربر" },
             { command: "revoke_cmd", description: "🔒 لغو دسترسی اسلش کاربر" },
+            { command: "dollar", description: "💵 قیمت دلار، ارز و طلا با نمودار" },
             { command: "weather", description: "🌤️ وضعیت زنده و پیش‌بینی آب و هوا" },
             { command: "tasks", description: "📋 مدیریت لیست کارها" },
             { command: "stop", description: "🛑 توقف گفتگو و پاکسازی" },

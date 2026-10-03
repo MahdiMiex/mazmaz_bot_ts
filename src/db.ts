@@ -33,6 +33,28 @@ try {
 } catch {
   // Column already exists
 }
+try {
+  db.run("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0;");
+} catch {}
+try {
+  db.run("ALTER TABLE users ADD COLUMN muted_until TEXT;");
+} catch {}
+try {
+  db.run("ALTER TABLE users ADD COLUMN mute_reason TEXT;");
+} catch {}
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS feedback_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    type TEXT,
+    content TEXT,
+    chat_title TEXT,
+    chat_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'pending'
+  );
+`);
 
 db.run(`
   CREATE TABLE IF NOT EXISTS tasks (
@@ -308,5 +330,92 @@ export function setCommandAccess(userId: number, allowed: boolean): boolean {
   db.run("UPDATE users SET can_use_commands = ? WHERE user_id = ?", [allowed ? 1 : 0, userId]);
   return true;
 }
+
+export function muteUser(
+  userId: number,
+  durationHours: number,
+  reason = "استفاده از کلمات نامناسب"
+): { untilDate: Date; untilStr: string } {
+  const until = new Date(Date.now() + durationHours * 3600 * 1000);
+  const untilIso = until.toISOString();
+  db.run(
+    "UPDATE users SET muted_until = ?, mute_reason = ? WHERE user_id = ?",
+    [untilIso, reason, userId]
+  );
+  const untilStr = new Intl.DateTimeFormat("fa-IR", {
+    timeStyle: "medium",
+    dateStyle: "short",
+    timeZone: "Asia/Tehran",
+  }).format(until);
+  return { untilDate: until, untilStr };
+}
+
+export function unmuteUser(userId: number): boolean {
+  db.run("UPDATE users SET muted_until = NULL, mute_reason = NULL WHERE user_id = ?", [userId]);
+  return true;
+}
+
+export function isUserMuted(userId: number): { isMuted: boolean; untilStr?: string; reason?: string } {
+  if (CONFIG.ADMIN_IDS.includes(userId)) return { isMuted: false };
+  const user = db.query("SELECT muted_until, mute_reason FROM users WHERE user_id = ?").get(userId) as any;
+  if (!user || !user.muted_until) return { isMuted: false };
+
+  const until = new Date(user.muted_until);
+  if (until.getTime() > Date.now()) {
+    const untilStr = new Intl.DateTimeFormat("fa-IR", {
+      timeStyle: "medium",
+      dateStyle: "short",
+      timeZone: "Asia/Tehran",
+    }).format(until);
+    return { isMuted: true, untilStr, reason: user.mute_reason || "نقض قوانین ربات" };
+  } else {
+    unmuteUser(userId);
+    return { isMuted: false };
+  }
+}
+
+export function banUser(userId: number): boolean {
+  db.run("UPDATE users SET is_banned = 1 WHERE user_id = ?", [userId]);
+  return true;
+}
+
+export function unbanUser(userId: number): boolean {
+  db.run("UPDATE users SET is_banned = 0 WHERE user_id = ?", [userId]);
+  return true;
+}
+
+export function isUserBanned(userId: number): boolean {
+  if (CONFIG.ADMIN_IDS.includes(userId)) return false;
+  const user = db.query("SELECT is_banned FROM users WHERE user_id = ?").get(userId) as any;
+  return user?.is_banned === 1;
+}
+
+export function setUserQuota(userId: number, newQuota: number): boolean {
+  db.run("UPDATE users SET daily_quota = ? WHERE user_id = ?", [newQuota, userId]);
+  return true;
+}
+
+export function addQuota(userId: number, amount: number): number {
+  const user = db.query("SELECT daily_quota FROM users WHERE user_id = ?").get(userId) as any;
+  const current = user?.daily_quota || CONFIG.DEFAULT_DAILY_QUOTA;
+  const updated = Math.max(0, current + amount);
+  db.run("UPDATE users SET daily_quota = ? WHERE user_id = ?", [updated, userId]);
+  return updated;
+}
+
+export function saveFeedbackReport(
+  userId: number,
+  type: "bug" | "suggestion" | "criticism" | "profanity",
+  content: string,
+  chatTitle: string,
+  chatId: number
+): number {
+  const result = db.run(
+    "INSERT INTO feedback_reports (user_id, type, content, chat_title, chat_id) VALUES (?, ?, ?, ?, ?)",
+    [userId, type, content, chatTitle, chatId]
+  );
+  return result.lastInsertRowid as number;
+}
+
 
 

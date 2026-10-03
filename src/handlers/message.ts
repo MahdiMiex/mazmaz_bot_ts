@@ -11,6 +11,14 @@ import { CONFIG, updateGeminiApiKey } from "../config";
 import { sendSafeMessage, withTyping } from "../utils/chunker";
 import { markdownToTelegramHtml } from "../utils/formatter";
 import { getSmartReaction } from "../utils/reactions";
+import {
+  isBugReport,
+  isFeedbackOrCriticism,
+  handleBugReport,
+  handleFeedbackOrCriticism,
+  handleProfanityAlert,
+  ADMIN_REPLY_TARGET,
+} from "../services/feedback";
 
 const GREETINGS_FA = [
   "جانم رفیق! مزمز دربست در خدمتته 👂 بگو چی برات ردیف کنم؟",
@@ -41,6 +49,26 @@ export async function handleTextMessage(ctx: Context) {
       allow_sending_without_reply: true,
     },
   };
+
+  // پاسخ مستقیم ادمین (مهدی) به گزارش یا پیام کاربر
+  if (isAdmin && !isGroup && ADMIN_REPLY_TARGET.has(userId)) {
+    const targetUserId = ADMIN_REPLY_TARGET.get(userId)!;
+    ADMIN_REPLY_TARGET.delete(userId);
+    try {
+      await ctx.api.sendMessage(
+        targetUserId,
+        `📩 <b>پاسخ مدیریت (مهدی) به گزارش / پیام شما:</b>\n\n${text}`,
+        { parse_mode: "HTML" }
+      );
+      await ctx.reply(`✅ پاسخ شما با موفقیت برای کاربر <code>${targetUserId}</code> ارسال شد!`, {
+        ...replyOpts,
+        parse_mode: "HTML",
+      });
+    } catch (e: any) {
+      await ctx.reply(`❌ خطا در ارسال پاسخ به کاربر: ${e?.message || e}`, replyOpts);
+    }
+    return;
+  }
 
   // Check if admin is pasting a Google Gemini API key directly
   if ((text.startsWith("AIzaSy") || text.startsWith("AQ.")) && isAdmin) {
@@ -111,33 +139,26 @@ export async function handleTextMessage(ctx: Context) {
     }
   }
 
-  // 2. بررسی الفاظ نامناسب (پاسخ کوبنده طنز + ارسال گزارش به رئیس)
+  // 2. بررسی الفاظ نامناسب (پاسخ کوبنده طنز + ارسال دکمه‌های میوت ۶ ساعته/۲۴ ساعته به رئیس مهدی)
   const roast = checkProfanity(text);
   if (roast) {
     if (!isAdmin) {
-      const senderName = ctx.from?.first_name ? `${ctx.from.first_name} ${ctx.from.last_name || ""}`.trim() : "کاربر";
-      const senderUser = ctx.from?.username ? `@${ctx.from.username}` : "بدون یوزرنیم";
-      const where = isGroup ? `گروه «${ctx.chat?.title || "گروه"}»` : "پی‌وی ربات";
-
-      const reportText = (
-        `⚠️ <b>گزارش استفاده از کلمات نامناسب / توهین:</b>\n\n` +
-        `👤 فرستنده: <b>${senderName}</b> (${senderUser})\n` +
-        `🔢 آیدی عددی: <code>${userId}</code>\n` +
-        `📍 مکان: <b>${where}</b>\n` +
-        `💬 متن پیام: <code>${text.slice(0, 200)}</code>\n\n` +
-        `💡 <i>جهت اطلاع شما رئیس مهدی. اگر نیاز به محدودسازی هست اقدام کنید.</i>`
-      );
-
-      const alertKb = new InlineKeyboard()
-        .text("🚫 لغو دسترسی کاربر", `rejc:${userId}`)
-        .text("👁️ نادیده گرفتن", "ignore_alert");
-
-      for (const adminId of CONFIG.ADMIN_IDS) {
-        ctx.api.sendMessage(adminId, reportText, { reply_markup: alertKb, parse_mode: "HTML" }).catch(() => {});
-      }
+      await handleProfanityAlert(ctx, text, roast);
+      return;
     }
-
     await ctx.reply(roast, replyOpts);
+    return;
+  }
+
+  // 2.1 بررسی گزارش باگ توسط کاربران (ارسال به پی‌وی مهدی + منشن در گروه)
+  if (!isAdmin && isBugReport(cleanText || text)) {
+    await handleBugReport(ctx, cleanText || text);
+    return;
+  }
+
+  // 2.2 بررسی پیشنهاد و انتقادات کاربران (ارسال مستقیم به مهدی با تاریخ و ساعت دقیق)
+  if (!isAdmin && isFeedbackOrCriticism(cleanText || text)) {
+    await handleFeedbackOrCriticism(ctx, cleanText || text);
     return;
   }
 

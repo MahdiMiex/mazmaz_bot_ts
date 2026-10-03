@@ -1,6 +1,6 @@
 import { Context, NextFunction, InlineKeyboard } from "grammy";
 import { CONFIG } from "../config";
-import { registerOrUpdateUser, checkAndConsumeQuota, canUserUseCommands } from "../db";
+import { registerOrUpdateUser, checkAndConsumeQuota, canUserUseCommands, isUserBanned, isUserMuted } from "../db";
 
 const NOTIFIED_USERS = new Set<number>();
 
@@ -28,6 +28,44 @@ export async function accessControlMiddleware(ctx: Context, next: NextFunction) 
   // 1. Admin always has unlimited access
   if (isAdmin) {
     return await next();
+  }
+
+  // 1.1 بررسی مسدودسازی دائم (Ban)
+  if (isUserBanned(userId)) {
+    if (!isGroup) {
+      await ctx.reply(
+        "🚫 <b>دسترسی شما مسدود شده است:</b>\n\nشما به دستور مدیریت از استفاده از ربات به طور کامل مسدود شده‌اید.",
+        { parse_mode: "HTML" }
+      );
+    }
+    return;
+  }
+
+  // 1.2 بررسی میوت موقت (Mute)
+  const muteStatus = isUserMuted(userId);
+  if (muteStatus.isMuted) {
+    const text = ctx.message?.text || "";
+    const isBotCalled =
+      !isGroup ||
+      ctx.message?.reply_to_message?.from?.id === ctx.me?.id ||
+      text.includes(`@${ctx.me?.username?.toLowerCase()}`) ||
+      /^(?:(?:سلام|درود|هی|الو|چطوری)\s+)?(?:مزمز|mazmaz)/i.test(text.trim());
+
+    if (isBotCalled) {
+      await ctx.reply(
+        `⏳ <b>دسترسی شما موقتاً مسدود است!</b>\n\n` +
+          `به دلیل: <b>${muteStatus.reason}</b>\n` +
+          `مهلت محرومیت تا: <code>${muteStatus.untilStr}</code>\n\n` +
+          `تا پایان این مهلت، ربات به درخواست‌های شما پاسخی نخواهد داد. 🤫`,
+        {
+          parse_mode: "HTML",
+          reply_parameters: ctx.message?.message_id
+            ? { message_id: ctx.message.message_id, allow_sending_without_reply: true }
+            : undefined,
+        }
+      );
+    }
+    return;
   }
 
   // 2. محافظت سفت و سخت از دستورات اسلش و تنظیمات ربات
