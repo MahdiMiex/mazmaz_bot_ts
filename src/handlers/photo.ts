@@ -53,6 +53,10 @@ export async function handlePhotoMessage(ctx: Context) {
   }
 
   const caption = ctx.message?.caption || "لطفاً این تصویر را با دقت و جزئیات کامل تحلیل و توضیح بده.";
+  const statusMsg = await ctx.reply("👁️‍🗨️ <b>در حال دیدن و تحلیل هوشمند تصویر با مزمز... ⏳</b>", {
+    ...replyOpts,
+    parse_mode: "HTML",
+  });
 
   await withTyping(ctx, async () => {
     try {
@@ -66,7 +70,7 @@ export async function handlePhotoMessage(ctx: Context) {
       });
 
       if (!imgRes.ok) {
-        await ctx.reply("❌ خطا در دانلود تصویر از تلگرام.", replyOpts);
+        await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, "❌ خطا در دانلود تصویر از تلگرام.");
         return;
       }
 
@@ -77,13 +81,22 @@ export async function handlePhotoMessage(ctx: Context) {
       const analysis = markdownToTelegramHtml(rawAnalysis);
       const finalMsg = `🖼️ <b>تحلیل هوشمند تصویر توسط مزمز:</b>\n\n${analysis}${formatQuotaFooter(userId)}`;
 
-      await sendSafeMessage(ctx, finalMsg, {
-        ...replyOpts,
-        parse_mode: "HTML",
-      });
+      if (finalMsg.length <= 4000) {
+        try {
+          await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalMsg, { parse_mode: "HTML" });
+        } catch {
+          await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, `🖼️ تحلیل هوشمند تصویر:\n\n${rawAnalysis}${formatQuotaFooter(userId)}`).catch(() => {});
+        }
+      } else {
+        await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+        await sendSafeMessage(ctx, finalMsg, {
+          ...replyOpts,
+          parse_mode: "HTML",
+        });
+      }
     } catch (err: any) {
       console.error("Photo analysis error:", err);
-      await ctx.reply(`❌ خطا در تحلیل عکس: ${err.message || err}`, replyOpts);
+      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, `❌ خطا در تحلیل عکس: ${err.message || err}`).catch(() => {});
     }
   });
 }

@@ -90,12 +90,20 @@ bot.command(["tasks", "tasks@mazmazAgentBot"], (ctx) => renderTasksMenu(ctx, ctx
 bot.command(["weather", "weather@mazmazAgentBot", "hava"], async (ctx) => {
   const parts = ctx.message?.text?.trim().split(/\s+/) || [];
   const city = parts.slice(1).join(" ").trim() || "تهران";
-  const res = await withTyping(ctx, () => getWeather(city));
-  const finalMsg = `${res}${formatQuotaFooter(ctx.from!.id)}`;
-  await sendSafeMessage(ctx, finalMsg, {
+  const statusMsg = await ctx.reply(`🌤️ <i>در حال دریافت وضعیت آب و هوای ${city}... ⏳</i>`, {
     parse_mode: "HTML",
     reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
   });
+  const res = await withTyping(ctx, () => getWeather(city));
+  const finalMsg = `${res}${formatQuotaFooter(ctx.from!.id)}`;
+  try {
+    await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalMsg, { parse_mode: "HTML" });
+  } catch {
+    await ctx.reply(finalMsg, {
+      parse_mode: "HTML",
+      reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
+    });
+  }
 });
 
 bot.command(["setkey", "setkey@mazmazAgentBot"], async (ctx) => {

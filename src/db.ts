@@ -186,10 +186,10 @@ export function getUserQuotaInfo(userId: number): { remaining: number; dailyQuot
 }
 
 export function formatQuotaFooter(userId: number): string {
-  const info = getUserQuotaInfo(userId);
-  if (info.isAdmin) {
-    return "\n\n──────────────\n👑 <b>دسترسی ادمین:</b> <code>نامحدود ⚡</code>";
+  if (CONFIG.ADMIN_IDS.includes(userId)) {
+    return "";
   }
+  const info = getUserQuotaInfo(userId);
   return `\n\n──────────────\n📊 <b>سهمیه باقی‌مانده امروز:</b> <code>${info.remaining}/${info.dailyQuota}</code>`;
 }
 

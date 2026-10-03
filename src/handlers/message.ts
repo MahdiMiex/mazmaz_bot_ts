@@ -237,12 +237,22 @@ export async function handleTextMessage(ctx: Context) {
   // 8. خواندن و تحلیل لینک‌های اینترنتی
   if (isGeneralWebUrl(text)) {
     incrementStat("links_analyzed");
-    const analysis = await withTyping(ctx, () => fetchAndAnalyzeLink(userId, text));
-    const finalMsg = `${analysis}${formatQuotaFooter(userId)}`;
-    await sendSafeMessage(ctx, finalMsg, {
+    const statusMsg = await ctx.reply("🌐 <b>در حال دریافت محتوای صفحه و تحلیل عمیق با هوش مصنوعی... ⏳</b>", {
       ...replyOpts,
       parse_mode: "HTML",
     });
+    const analysis = await withTyping(ctx, () => fetchAndAnalyzeLink(userId, text));
+    const finalMsg = `${analysis}${formatQuotaFooter(userId)}`;
+    if (finalMsg.length <= 4000) {
+      try {
+        await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalMsg, { parse_mode: "HTML" });
+      } catch {
+        await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalMsg).catch(() => {});
+      }
+    } else {
+      await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+      await sendSafeMessage(ctx, finalMsg, { ...replyOpts, parse_mode: "HTML" });
+    }
     return;
   }
 
@@ -257,13 +267,23 @@ export async function handleTextMessage(ctx: Context) {
     lower.includes("antutu")
   ) {
     incrementStat("benchmarks_queried");
-    const query = text.replace(/بنچمارک|benchmark/gi, "").trim() || "all";
-    const result = await withTyping(ctx, () => queryBenchmark(userId, query));
-    const finalMsg = `${result}${formatQuotaFooter(userId)}`;
-    await sendSafeMessage(ctx, finalMsg, {
+    const statusMsg = await ctx.reply("⚡ <b>در حال استعلام جدیدترین داده‌های بنچمارک... ⏳</b>", {
       ...replyOpts,
       parse_mode: "HTML",
     });
+    const query = text.replace(/بنچمارک|benchmark/gi, "").trim() || "all";
+    const result = await withTyping(ctx, () => queryBenchmark(userId, query));
+    const finalMsg = `${result}${formatQuotaFooter(userId)}`;
+    if (finalMsg.length <= 4000) {
+      try {
+        await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalMsg, { parse_mode: "HTML" });
+      } catch {
+        await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalMsg).catch(() => {});
+      }
+    } else {
+      await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+      await sendSafeMessage(ctx, finalMsg, { ...replyOpts, parse_mode: "HTML" });
+    }
     return;
   }
 
@@ -271,12 +291,17 @@ export async function handleTextMessage(ctx: Context) {
   const weatherIntent = extractWeatherIntent(cleanText || text);
   if (weatherIntent.isWeather) {
     incrementStat("weather_checks");
-    const res = await withTyping(ctx, () => getWeather(weatherIntent.city));
-    const finalMsg = `${res}${formatQuotaFooter(userId)}`;
-    await sendSafeMessage(ctx, finalMsg, {
+    const statusMsg = await ctx.reply(`🌤️ <i>در حال دریافت وضعیت آب و هوای ${weatherIntent.city}... ⏳</i>`, {
       ...replyOpts,
       parse_mode: "HTML",
     });
+    const res = await withTyping(ctx, () => getWeather(weatherIntent.city));
+    const finalMsg = `${res}${formatQuotaFooter(userId)}`;
+    try {
+      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalMsg, { parse_mode: "HTML" });
+    } catch {
+      await ctx.reply(finalMsg, { ...replyOpts, parse_mode: "HTML" });
+    }
     return;
   }
 
@@ -292,24 +317,45 @@ export async function handleTextMessage(ctx: Context) {
     lower.includes("bitcoin")
   ) {
     incrementStat("crypto_checks");
-    const res = await withTyping(ctx, () => getCryptoPrices());
-    const finalMsg = `${res}${formatQuotaFooter(userId)}`;
-    await sendSafeMessage(ctx, finalMsg, {
+    const statusMsg = await ctx.reply("📊 <i>در حال استعلام نرخ لحظه‌ای بازار ارز و کریپتو... ⏳</i>", {
       ...replyOpts,
       parse_mode: "HTML",
     });
+    const res = await withTyping(ctx, () => getCryptoPrices());
+    const finalMsg = `${res}${formatQuotaFooter(userId)}`;
+    try {
+      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalMsg, { parse_mode: "HTML" });
+    } catch {
+      await ctx.reply(finalMsg, { ...replyOpts, parse_mode: "HTML" });
+    }
     return;
   }
 
-  // 12. چت عمومی هوش مصنوعی با Gemini و سیستم تایپینگ زنده
+  // 12. چت عمومی هوش مصنوعی با Gemini و سیستم پیش‌نمایش و تایپینگ زنده
   incrementStat("ai_queries");
+  const statusMsg = await ctx.reply("💭 <i>در حال تفکر و تدوین پاسخ هوشمند... ⏳</i>", {
+    ...replyOpts,
+    parse_mode: "HTML",
+  });
+
   const promptToSend = cleanText || text;
   const rawResponse = await withTyping(ctx, () => askGemini(userId, promptToSend));
   const formattedResponse = markdownToTelegramHtml(rawResponse);
   const finalResponse = `${formattedResponse}${formatQuotaFooter(userId)}`;
 
-  await sendSafeMessage(ctx, finalResponse, {
-    ...replyOpts,
-    parse_mode: "HTML",
-  });
+  if (finalResponse.length <= 4000) {
+    try {
+      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalResponse, {
+        parse_mode: "HTML",
+      });
+    } catch (e: any) {
+      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, `${rawResponse}${formatQuotaFooter(userId)}`).catch(() => {});
+    }
+  } else {
+    await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+    await sendSafeMessage(ctx, finalResponse, {
+      ...replyOpts,
+      parse_mode: "HTML",
+    });
+  }
 }
