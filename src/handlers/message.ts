@@ -10,6 +10,7 @@ import { addTask, incrementStat } from "../db";
 import { CONFIG, updateGeminiApiKey } from "../config";
 import { sendSafeMessage } from "../utils/chunker";
 import { markdownToTelegramHtml } from "../utils/formatter";
+import { getSmartReaction } from "../utils/reactions";
 
 const GREETINGS_FA = [
   "جانم رفیق! مزمز دربست در خدمتته 👂 بگو چی برات ردیف کنم؟",
@@ -86,7 +87,18 @@ export async function handleTextMessage(ctx: Context) {
     return;
   }
 
-  // 1. Check for Profanity (Anti-toxic funny roast + Report to Admin)
+  // 1. ری‌اکشن هوشمند به پیام‌های تشکر، خنده، تأیید و خداحافظی جهت کاهش ۱۰۰ درصدی مصرف توکن
+  const smartReaction = getSmartReaction(text);
+  if (smartReaction) {
+    try {
+      await ctx.react(smartReaction);
+      return;
+    } catch (e) {
+      // اگر در گروه ری‌اکشن غیرفعال بود، ربات وارد روال عادی پیام‌ها می‌شود
+    }
+  }
+
+  // 2. Check for Profanity (Anti-toxic funny roast + Report to Admin)
   const roast = checkProfanity(text);
   if (roast) {
     if (!CONFIG.ADMIN_IDS.includes(userId)) {
