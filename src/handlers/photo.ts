@@ -3,6 +3,8 @@ import { askGemini } from "../services/ai";
 import { CONFIG } from "../config";
 import { HttpsProxyAgent } from "https-proxy-agent";
 
+import { markdownToTelegramHtml } from "../utils/formatter";
+
 const agent = CONFIG.USE_PROXY ? new HttpsProxyAgent(CONFIG.PROXY_URL) : undefined;
 
 export async function handlePhotoMessage(ctx: Context) {
@@ -38,14 +40,23 @@ export async function handlePhotoMessage(ctx: Context) {
     const arrayBuffer = await imgRes.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString("base64");
 
-    const analysis = await askGemini(ctx.from!.id, caption, base64);
+    const rawAnalysis = await askGemini(ctx.from!.id, caption, base64);
+    const analysis = markdownToTelegramHtml(rawAnalysis);
 
-    await ctx.api.editMessageText(
-      ctx.chat!.id,
-      statusMsg.message_id,
-      `🖼️ <b>تحلیل هوشمند تصویر توسط مزمز:</b>\n\n${analysis}`,
-      { parse_mode: "HTML" }
-    );
+    try {
+      await ctx.api.editMessageText(
+        ctx.chat!.id,
+        statusMsg.message_id,
+        `🖼️ <b>تحلیل هوشمند تصویر توسط مزمز:</b>\n\n${analysis}`,
+        { parse_mode: "HTML" }
+      );
+    } catch {
+      await ctx.api.editMessageText(
+        ctx.chat!.id,
+        statusMsg.message_id,
+        `🖼️ تحلیل هوشمند تصویر توسط مزمز:\n\n${rawAnalysis}`
+      ).catch(() => {});
+    }
   } catch (err: any) {
     console.error("Photo analysis error:", err);
     await ctx.api.editMessageText(

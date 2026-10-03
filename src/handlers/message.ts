@@ -9,6 +9,7 @@ import { renderTasksMenu } from "./commands";
 import { addTask, incrementStat } from "../db";
 import { CONFIG, updateGeminiApiKey } from "../config";
 import { sendSafeMessage } from "../utils/chunker";
+import { markdownToTelegramHtml } from "../utils/formatter";
 
 const GREETINGS_FA = [
   "جانم رفیق! مزمز دربست در خدمتته 👂 بگو چی برات ردیف کنم؟",
@@ -46,16 +47,17 @@ export async function handleTextMessage(ctx: Context) {
     return;
   }
 
-  // In groups, only reply if mentioned or replied to
+  // در گروه‌ها فقط در ۳ حالت پاسخ داده شود:
+  // ۱. ریپلای مستقیم روی پیام ربات
+  // ۲. منشن شدن دقیق نام کاربری ربات (@mazmazAgentBot)
+  // ۳. پیام‌های دستوری (کامندهایی که با / شروع می‌شوند)
   if (isGroup) {
     const botInfo = ctx.me;
     const isReplyToBot = ctx.message?.reply_to_message?.from?.id === botInfo.id;
-    const isBotMentioned =
-      lower.includes("مزمز") ||
-      lower.includes("mazmaz") ||
-      lower.includes(`@${botInfo.username.toLowerCase()}`);
+    const isBotMentioned = lower.includes(`@${botInfo.username.toLowerCase()}`);
+    const isCommand = text.startsWith("/");
 
-    if (!isReplyToBot && !isBotMentioned) {
+    if (!isReplyToBot && !isBotMentioned && !isCommand) {
       return;
     }
   }
@@ -242,21 +244,22 @@ export async function handleTextMessage(ctx: Context) {
   });
 
   const promptToSend = cleanText || text;
-  const response = await askGemini(userId, promptToSend);
+  const rawResponse = await askGemini(userId, promptToSend);
+  const formattedResponse = markdownToTelegramHtml(rawResponse);
 
-  if (response.length <= 4000) {
+  if (formattedResponse.length <= 4000) {
     try {
-      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, response, {
+      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, formattedResponse, {
         parse_mode: "HTML",
       });
     } catch (e: any) {
       // Fallback without HTML formatting if tag mismatch
-      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, response).catch(() => {});
+      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, rawResponse).catch(() => {});
     }
   } else {
     // Message exceeds Telegram limit: clean up status message and stream chunks
     await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
-    await sendSafeMessage(ctx, response);
+    await sendSafeMessage(ctx, formattedResponse, { parse_mode: "HTML" });
   }
 }
 
