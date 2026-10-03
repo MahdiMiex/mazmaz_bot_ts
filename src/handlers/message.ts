@@ -47,26 +47,28 @@ export async function handleTextMessage(ctx: Context) {
     return;
   }
 
-  // در گروه‌ها زمانی پاسخ داده شود که:
-  // ۱. ریپلای مستقیم روی پیام ربات باشد
-  // ۲. اسم ربات صدا زده شود (مزمز یا mazmaz)
-  // ۳. یوزرنیم ربات منشن شود (@mazmazAgentBot)
-  // ۴. پیام با کامند شروع شود (/)
+  // در گروه‌های شلوغ، ربات فقط در موارد زیر پاسخ می‌دهد:
+  // ۱. ریپلای مستقیم روی پیام خود ربات
+  // ۲. منشن شدن رسمی با آیدی (@mazmazAgentBot)
+  // ۳. خطاب مستقیم در ابتدای پیام (مثلاً: «مزمز این کد چیه؟» یا «سلام مزمز هوا چطوره؟»)
+  // ۴. دستورات با اسلش (/)
+  // ⛔ اگر اسم مزمز وسط جمله باشد (مثل «نظرتون راجع به مزمز چیه؟» یا «چیپس مزمز»)، ربات کاملاً سکوت می‌کند.
   if (isGroup) {
     const botInfo = ctx.me;
     const isReplyToBot = ctx.message?.reply_to_message?.from?.id === botInfo.id;
     const isBotMentioned = lower.includes(`@${botInfo.username.toLowerCase()}`);
-    const isNameCalled = /(?:^|\s|[،,:.])(مزمز|mazmaz)(?:\s|[،,:.!؟?]|$)/i.test(text);
+    const isDirectCallAtStart = /^(?:(?:سلام|درود|هی|الو|چطوری|ey|hi|hello)\s+)?(?:مزمز|mazmaz)(?:[،,:.!؟?\s]|$)/i.test(text.trim());
     const isCommand = text.startsWith("/");
 
-    if (!isReplyToBot && !isBotMentioned && !isNameCalled && !isCommand) {
+    if (!isReplyToBot && !isBotMentioned && !isDirectCallAtStart && !isCommand) {
       return;
     }
   }
 
-  // تمیز کردن پرامپت با حذف نام ربات و منشن‌ها
+  // تمیز کردن پرامپت با حذف خطاب مستقیم و نام ربات
   let cleanText = text
     .replace(new RegExp(`@${ctx.me.username}\\b`, "gi"), "")
+    .replace(/^(?:(?:سلام|درود|هی|الو|چطوری|ey|hi|hello)\s+)?(?:مزمز|mazmaz)[،,:.!؟?\s]*/i, "")
     .replace(/مزمزم?|mazmaz/gi, "")
     .replace(/^[\s،,:!؟?]+|[\s،,:!؟?]+$/g, "")
     .trim();
