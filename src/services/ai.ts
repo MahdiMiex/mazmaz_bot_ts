@@ -112,7 +112,12 @@ export function isSensitiveExfiltrationAttempt(text: string): boolean {
   return leakPatterns.some((pattern) => pattern.test(lower));
 }
 
-export async function askGemini(userId: number, prompt: string, imageBase64?: string): Promise<string> {
+export async function askGemini(
+  userId: number,
+  prompt: string,
+  imageBase64?: string,
+  ctx?: any
+): Promise<string> {
   const isAdmin = CONFIG.ADMIN_IDS.includes(userId);
 
   // ۱. فیلتر فحش و پاسخ‌های رفاقتی
@@ -255,7 +260,17 @@ export async function askGemini(userId: number, prompt: string, imageBase64?: st
 - هر زمان ادمین درخواست افزایش سهمیه، شارژ یا بوست پیام برای کاربری داد، ابزار boost_quota را با targetUserId و amount صدا بزن.
 - اگر مقدار مشخص نشد، پیشفرض ۱۰ است.
 - اگر کاربر غیرادمین درخواست افزایش سهمیه برای خودش یا دیگری داد، درخواست را رد کن و بگو دسترسی ندارد.
-- پس از دریافت نتیجه ابزار، نتیجه را کوتاه و واضح به ادمین اعلام کن (مثال: "سهمیه کاربر [آیدی] به میزان [تعداد] افزایش یافت. سهمیه جدید: [سهمیه_جدید]").`;
+- پس از دریافت نتیجه ابزار، نتیجه را کوتاه و واضح به ادمین اعلام کن (مثال: "سهمیه کاربر [آیدی] به میزان [تعداد] افزایش یافت. سهمیه جدید: [سهمیه_جدید]").
+
+### ابزارهای مدیریتی تلگرام:
+۱. summarize_chat: برای خلاصهسازی پیامهای اخیر گروه (ورودی: limit تعداد پیامها).
+۲. delete_recent_messages: پاک کردن پیامهای اخیر گروه (ورودی: count تعداد پیامها).
+۳. moderate_user: اخراج، رفع مسدودیت یا بیصدا کردن کاربر (ورودی: action شامل "ban" | "unban" | "mute" و user_id شناسه عددی).
+۴. manage_bot_chats: دیدن لیست گروههای فعال بات یا خروج از گروه (ورودی: action شامل "list" | "leave" و اختیاری chat_id).
+
+قوانین اجرایی:
+- دستورات مدیریتی و حذف پیام فقط در صورتی اجرا شوند که کاربر درخواستدهنده ادمین باشد.
+- پس از اجرای موفق ابزار، وضعیت را کوتاه گزارش کن.`;
 
     const userSystemInstruction = `شما «مزمز» یا mazmaz هستید؛ یک ربات تلگرام فوق‌العاده هوشمند، فنی، کارکشته و توسعه‌یافته با تکیه بر استک مدرن (TypeScript, grammY, Bun, SQLite و Google Gemini). سازنده و ادمین اصلی شما «مهدی» است.
 
@@ -342,18 +357,65 @@ export async function askGemini(userId: number, prompt: string, imageBase64?: st
     ];
 
     if (isAdmin) {
-      functionDeclarations.push({
-        name: "boost_quota",
-        description: "افزایش سهمیه روزانه کاربر توسط ادمین",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            targetUserId: { type: Type.INTEGER, description: "شناسه عددی کاربر تلگرام" },
-            amount: { type: Type.INTEGER, description: "تعداد پیام اضافه (پیشفرض ۱۰)" },
+      functionDeclarations.push(
+        {
+          name: "boost_quota",
+          description: "افزایش سهمیه روزانه کاربر توسط ادمین",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              targetUserId: { type: Type.INTEGER, description: "شناسه عددی کاربر تلگرام" },
+              amount: { type: Type.INTEGER, description: "تعداد پیام اضافه (پیشفرض ۱۰)" },
+            },
+            required: ["targetUserId"],
           },
-          required: ["targetUserId"],
         },
-      });
+        {
+          name: "summarize_chat",
+          description: "دریافت تاریخچه پیامهای اخیر گروه برای خلاصهسازی",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              limit: { type: Type.NUMBER, description: "تعداد پیامهای اخیر (پیشفرض ۵۰)" },
+            },
+          },
+        },
+        {
+          name: "delete_recent_messages",
+          description: "حذف گروهی آخرین پیامهای ارسالی در گروه",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              count: { type: Type.NUMBER, description: "تعداد پیامها برای پاکسازی" },
+            },
+            required: ["count"],
+          },
+        },
+        {
+          name: "moderate_user",
+          description: "مدیریت و اعمال محدودیت روی کاربران گروه (بن، آنبن، میوت)",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              action: { type: Type.STRING, description: "نوع عملیات: ban یا unban یا mute" },
+              user_id: { type: Type.NUMBER, description: "شناسه عددی کاربر مقصد" },
+            },
+            required: ["action", "user_id"],
+          },
+        },
+        {
+          name: "manage_bot_chats",
+          description: "مشاهده لیست گروهها یا لفت دادن بات از گروه",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              action: { type: Type.STRING, description: "عملیات: list یا leave" },
+              chat_id: { type: Type.NUMBER, description: "شناسه گروه در صورت درخواست خروج" },
+            },
+            required: ["action"],
+          },
+        }
+      );
     }
 
     const tools = [{ functionDeclarations }];
@@ -376,7 +438,7 @@ export async function askGemini(userId: number, prompt: string, imageBase64?: st
         // اجرای ابزارها (Function Calling) با لاگر ترمینالی و پاسخ به مدل
         if (response?.functionCalls && response.functionCalls.length > 0) {
           const call = response.functionCalls[0];
-          const toolResult = await executeTool(call.name, call.args || {}, userId);
+          const toolResult = await executeTool(call.name, call.args || {}, userId, ctx);
 
           contents.push(response.candidates[0].content);
           contents.push({

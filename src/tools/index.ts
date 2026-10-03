@@ -6,6 +6,9 @@ import { searchWeb, executeWebSearch } from "../services/webSearch";
 import { addTask, getTasks, boostUserQuota } from "../db";
 import { runToolWithLogger } from "../utils/toolLogger";
 import { CONFIG } from "../config";
+import { adminToolsSchema, executeAdminTool, setupTrackingMiddleware } from "./adminTools";
+
+export { adminToolsSchema, executeAdminTool, setupTrackingMiddleware };
 
 export interface ToolDefinition {
   name: string;
@@ -111,7 +114,8 @@ export const TOOLS_SCHEMA: ToolDefinition[] = [
 export async function executeTool(
   toolName: string,
   args: Record<string, any>,
-  userId: number
+  userId: number,
+  ctx?: any
 ): Promise<string> {
   try {
     switch (toolName) {
@@ -174,6 +178,15 @@ export async function executeTool(
           const tasks = getTasks(userId);
           if (tasks.length === 0) return "لیست کارهای روزمره شما خالی است.";
           return tasks.map((t) => `${t.is_done ? "✅" : "⬜"} ${t.title}`).join("\n");
+        });
+      }
+      case "summarize_chat":
+      case "delete_recent_messages":
+      case "moderate_user":
+      case "manage_bot_chats": {
+        return await runToolWithLogger(`ADMIN_${toolName.toUpperCase()}`, JSON.stringify(args), async () => {
+          const res = await executeAdminTool(ctx?.api, ctx, toolName, args, userId);
+          return JSON.stringify(res);
         });
       }
       default:

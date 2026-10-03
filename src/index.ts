@@ -50,6 +50,7 @@ import { getDollarAndGoldReport } from "./services/currency";
 import { LMSYS_ARENA_SUMMARY, TOP_HARDWARE_BENCHMARKS } from "./services/benchmarks";
 import { testGeminiKey, clearUserHistory } from "./services/ai";
 import { fetchAndAnalyzeLink } from "./services/linkReader";
+import { setupTrackingMiddleware } from "./tools/adminTools";
 
 console.log("🚀 Initializing mazmaz Telegram Bot with Bun & grammY...");
 
@@ -63,6 +64,9 @@ export const bot = new Bot(CONFIG.BOT_TOKEN, {
     },
   },
 });
+
+// 0.5 Register Telegram Group Tracking Middleware (ذخیره تاریخچه پیام‌ها برای هوش مصنوعی)
+setupTrackingMiddleware(bot);
 
 // 1. Register Global Access Control & Quota Middleware
 bot.use(accessControlMiddleware);

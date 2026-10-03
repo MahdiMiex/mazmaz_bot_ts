@@ -103,6 +103,30 @@ db.run(`
   );
 `);
 
+db.run(`
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER,
+    message_id INTEGER,
+    user_id INTEGER,
+    text TEXT,
+    created_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages (chat_id, id DESC);
+
+  CREATE TABLE IF NOT EXISTS chats (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT
+  );
+`);
+
+try {
+  db.run(`
+    INSERT OR IGNORE INTO chats (chat_id, title)
+    SELECT chat_id, title FROM groups WHERE status = 'approved';
+  `);
+} catch {}
+
 
 export function registerOrUpdateUser(
   userId: number,
@@ -549,6 +573,14 @@ export function registerOrUpdateGroup(
       [title || existing.title, type || existing.type, finalAddedById, finalAddedByName, finalAddedByUsername, finalStatus, chatId]
     );
   }
+
+  // همگام‌سازی با جدول chats برای ابزار manage_bot_chats
+  const effectiveStatus = status !== undefined ? status : (existing ? existing.status : "pending");
+  if (effectiveStatus === "approved") {
+    db.run("INSERT OR REPLACE INTO chats (chat_id, title) VALUES (?, ?)", [chatId, title || existing?.title || "گروه"]);
+  } else if (effectiveStatus === "left" || effectiveStatus === "rejected") {
+    db.run("DELETE FROM chats WHERE chat_id = ?", [chatId]);
+  }
 }
 
 export function getGroupById(chatId: number): GroupInfo | null {
@@ -561,6 +593,14 @@ export function getAllGroups(): GroupInfo[] {
 
 export function setGroupStatus(chatId: number, status: "pending" | "approved" | "rejected" | "left") {
   db.run("UPDATE groups SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?", [status, chatId]);
+  if (status === "approved") {
+    const grp = getGroupById(chatId);
+    if (grp) {
+      db.run("INSERT OR REPLACE INTO chats (chat_id, title) VALUES (?, ?)", [chatId, grp.title]);
+    }
+  } else if (status === "left" || status === "rejected") {
+    db.run("DELETE FROM chats WHERE chat_id = ?", [chatId]);
+  }
 }
 
 export function isGroupApproved(chatId: number): boolean {

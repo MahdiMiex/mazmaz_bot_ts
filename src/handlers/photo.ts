@@ -77,7 +77,7 @@ export async function handlePhotoMessage(ctx: Context) {
       const arrayBuffer = await imgRes.arrayBuffer();
       const base64 = Buffer.from(arrayBuffer).toString("base64");
 
-      const rawAnalysis = await askGemini(userId, caption, base64);
+      const rawAnalysis = await askGemini(userId, caption, base64, ctx);
       const analysis = markdownToTelegramHtml(rawAnalysis);
       const finalMsg = `🖼️ <b>تحلیل هوشمند تصویر توسط مزمز:</b>\n\n${analysis}${formatQuotaFooter(userId)}`;
 

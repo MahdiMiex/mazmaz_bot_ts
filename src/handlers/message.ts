@@ -419,7 +419,7 @@ export async function handleTextMessage(ctx: Context) {
   });
 
   const promptToSend = cleanText || text;
-  const rawResponse = await withTyping(ctx, () => askGemini(userId, promptToSend));
+  const rawResponse = await withTyping(ctx, () => askGemini(userId, promptToSend, undefined, ctx));
   const formattedResponse = markdownToTelegramHtml(rawResponse);
   const finalResponse = `${formattedResponse}${formatQuotaFooter(userId)}`;
 
