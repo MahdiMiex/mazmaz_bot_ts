@@ -132,27 +132,41 @@ async function searchSearXNG(query: string, maxResults: number): Promise<string 
 }
 
 /**
- * Tier 4: DuckDuckGo Scraper (Default Zero-Config fallback)
+ * Tier 4: DuckDuckGo Scraper (Default Zero-Config fallback with retry)
  */
 async function searchDuckDuckGo(query: string, maxResults: number): Promise<string> {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "fa,en-US;q=0.9,en;q=0.8",
-    },
-    // @ts-ignore
-    agent,
-  });
-
-  if (!res.ok) {
-    throw new Error(`خطای دریافت نتایج جستجو از موتور وب: کد ${res.status}`);
+  let html = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "fa,en-US;q=0.9,en;q=0.8",
+        },
+        // @ts-ignore
+        agent,
+      });
+      if (res.ok) {
+        html = await res.text();
+        break;
+      }
+    } catch (e: any) {
+      if (attempt === 1) {
+        console.warn("[DDG SCRAPE] Connection dropped, returning fallback:", e?.message);
+        return `امکان برقراری ارتباط با وب‌سرچ برای «${query}» در این لحظه میسر نشد. لطفاً بر اساس دانش داخلی خودت پاسخ بده.`;
+      }
+      await new Promise((r) => setTimeout(r, 600));
+    }
   }
 
-  const html = await res.text();
+  if (!html) {
+    return `امکان برقراری ارتباط با وب‌سرچ برای «${query}» در این لحظه میسر نشد. لطفاً بر اساس دانش داخلی خودت پاسخ بده.`;
+  }
+
   const $ = cheerio.load(html);
   const results: SearchResult[] = [];
 
@@ -227,7 +241,12 @@ export async function searchWeb(query: string, maxResults = 3): Promise<string> 
 
     // 4. Default resilient fallback: DuckDuckGo scraper
     if (!output) {
-      output = await searchDuckDuckGo(cleanQuery, maxResults);
+      try {
+        output = await searchDuckDuckGo(cleanQuery, maxResults);
+      } catch (e: any) {
+        console.warn("[SEARCH FALLBACK] Error in searchDuckDuckGo:", e?.message);
+        output = `امکان استعلام وب در این لحظه میسر نشد. لطفاً بر اساس اطلاعات موجود پاسخ کامل بده.`;
+      }
     }
 
     // Token Guard: Hard cap output length to ~1400 chars (prevents token inflation)

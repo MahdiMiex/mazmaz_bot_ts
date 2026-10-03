@@ -125,8 +125,8 @@ export async function executeTool(
         return `ابزار ناشناخته: ${toolName}`;
     }
   } catch (err: any) {
-    console.error(`Error executing tool ${toolName}:`, err);
-    return `خطا در اجرای ابزار ${toolName}: ${err.message || err}`;
+    console.error(`Error executing tool ${toolName}:`, err?.message || err);
+    return `امکان اجرای ابزار ${toolName} در این لحظه وجود ندارد. لطفاً بر اساس اطلاعات موجود و دانش خودت پاسخ کامل بده.`;
   }
 }
 

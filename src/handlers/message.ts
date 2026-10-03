@@ -5,6 +5,7 @@ import { isGeneralWebUrl, fetchAndAnalyzeLink } from "../services/linkReader";
 import { queryBenchmark } from "../services/benchmarks";
 import { getWeather, extractWeatherIntent } from "../services/weather";
 import { getCryptoPrices } from "../services/crypto";
+import { getDollarAndGoldReport } from "../services/currency";
 import { addTask, incrementStat, checkAndConsumeQuota, formatQuotaFooter } from "../db";
 import { CONFIG, updateGeminiApiKey } from "../config";
 import { sendSafeMessage, withTyping } from "../utils/chunker";
@@ -305,19 +306,74 @@ export async function handleTextMessage(ctx: Context) {
     return;
   }
 
-  // 11. نرخ ارز و کریپتو
-  if (
+  // 11. نرخ دلار بازار آزاد، طلا، سکه و ارزها (با تاریخ، ساعت دقیق و نمودار نوسان)
+  const isDollarIntent =
     lower.includes("دلار") ||
     lower.includes("قیمت دلار") ||
+    lower.includes("نرخ دلار") ||
+    lower.includes("قیمت طلا") ||
+    lower.includes("قیمت سکه") ||
+    lower.includes("ارز") ||
+    lower.includes("قیمت ارز") ||
+    lower.includes("یورو") ||
+    lower.includes("درهم");
+
+  if (isDollarIntent) {
+    incrementStat("crypto_checks");
+    const statusMsg = await ctx.reply("💵 <i>در حال استعلام لحظه‌ای قیمت دلار، طلا و نرخ آزاد بازار... ⏳</i>", {
+      ...replyOpts,
+      parse_mode: "HTML",
+    });
+
+    const report = await withTyping(ctx, () => getDollarAndGoldReport());
+    const quotaFooter = formatQuotaFooter(userId);
+    const finalMsg = `${report.text}${quotaFooter}`;
+
+    const dollarKb = new InlineKeyboard()
+      .text("📈 نمودار گرافیکی پیشرفته", "dlr_chart")
+      .text("🔄 به‌روزرسانی", "dlr_refresh");
+
+    // اگر کاربر صراحتاً نمودار یا چارت خواسته بود
+    if ((lower.includes("نمودار") || lower.includes("چارت")) && report.chartUrl) {
+      await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+      try {
+        await ctx.replyWithPhoto(report.chartUrl, {
+          caption: finalMsg.slice(0, 1000),
+          reply_markup: dollarKb,
+          parse_mode: "HTML",
+          reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
+        });
+        return;
+      } catch {
+        // Fallback to text if photo delivery fails
+      }
+    }
+
+    try {
+      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalMsg, {
+        reply_markup: dollarKb,
+        parse_mode: "HTML",
+      });
+    } catch {
+      await ctx.reply(finalMsg, { ...replyOpts, reply_markup: dollarKb, parse_mode: "HTML" });
+    }
+    return;
+  }
+
+  // 11.1 نرخ ارز دیجیتال و کریپتو (بیت‌کوین، اتریوم، تتر و ...)
+  if (
     lower.includes("کریپتو") ||
     lower.includes("بیت کوین") ||
     lower.includes("بیت‌کوین") ||
     lower.includes("تتر") ||
+    lower.includes("اتریوم") ||
+    lower.includes("سولانا") ||
+    lower.includes("تون کوین") ||
     lower.includes("crypto") ||
     lower.includes("bitcoin")
   ) {
     incrementStat("crypto_checks");
-    const statusMsg = await ctx.reply("📊 <i>در حال استعلام نرخ لحظه‌ای بازار ارز و کریپتو... ⏳</i>", {
+    const statusMsg = await ctx.reply("📊 <i>در حال استعلام نرخ لحظه‌ای بازار ارز دیجیتال... ⏳</i>", {
       ...replyOpts,
       parse_mode: "HTML",
     });

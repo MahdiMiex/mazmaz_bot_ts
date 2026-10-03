@@ -27,6 +27,7 @@ import { sendSafeMessage, withTyping } from "./utils/chunker";
 import { downloadMedia, cleanupFile } from "./services/mediaDownloader";
 import { getWeather } from "./services/weather";
 import { getCryptoPrices } from "./services/crypto";
+import { getDollarAndGoldReport } from "./services/currency";
 import { LMSYS_ARENA_SUMMARY, TOP_HARDWARE_BENCHMARKS } from "./services/benchmarks";
 import { testGeminiKey, clearUserHistory } from "./services/ai";
 
@@ -100,6 +101,29 @@ bot.command(["weather", "weather@mazmazAgentBot", "hava"], async (ctx) => {
     await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalMsg, { parse_mode: "HTML" });
   } catch {
     await ctx.reply(finalMsg, {
+      parse_mode: "HTML",
+      reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
+    });
+  }
+});
+
+bot.command(["dollar", "dollar@mazmazAgentBot", "arz", "tala"], async (ctx) => {
+  const statusMsg = await ctx.reply("💵 <i>در حال استعلام لحظه‌ای قیمت دلار، طلا و نرخ آزاد... ⏳</i>", {
+    parse_mode: "HTML",
+    reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
+  });
+  const report = await withTyping(ctx, () => getDollarAndGoldReport());
+  const dollarKb = new InlineKeyboard()
+    .text("📈 نمودار گرافیکی پیشرفته", "dlr_chart")
+    .text("🔄 به‌روزرسانی", "dlr_refresh");
+  try {
+    await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, report.text, {
+      reply_markup: dollarKb,
+      parse_mode: "HTML",
+    });
+  } catch {
+    await ctx.reply(report.text, {
+      reply_markup: dollarKb,
       parse_mode: "HTML",
       reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
     });
@@ -385,6 +409,43 @@ bot.callbackQuery(/^w_city:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery({ text: `آب و هوای ${city} به‌روز شد.` });
 });
 
+
+bot.callbackQuery("menu_dollar", async (ctx) => {
+  const report = await getDollarAndGoldReport();
+  const dollarKb = new InlineKeyboard()
+    .text("📈 نمودار گرافیکی پیشرفته", "dlr_chart")
+    .text("🔄 به‌روزرسانی", "dlr_refresh")
+    .row()
+    .text("🔙 بازگشت به منو", "menu_home");
+  await ctx.editMessageText(report.text, { reply_markup: dollarKb, parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery();
+});
+
+bot.callbackQuery("dlr_chart", async (ctx) => {
+  await ctx.answerCallbackQuery({ text: "در حال بارگذاری نمودار نوسان..." });
+  const report = await getDollarAndGoldReport();
+  if (report.chartUrl) {
+    const dollarKb = new InlineKeyboard().text("🔄 به‌روزرسانی زنده", "dlr_refresh");
+    await ctx.replyWithPhoto(report.chartUrl, {
+      caption: `📈 <b>نمودار نوسان روزانه دلار بازار آزاد (تومان)</b>\n\n${report.text.slice(0, 800)}`,
+      reply_markup: dollarKb,
+      parse_mode: "HTML",
+    }).catch(async () => {
+      await ctx.reply("❌ خطا در ارسال تصویر نمودار.", { parse_mode: "HTML" });
+    });
+  }
+});
+
+bot.callbackQuery("dlr_refresh", async (ctx) => {
+  const report = await getDollarAndGoldReport();
+  const dollarKb = new InlineKeyboard()
+    .text("📈 نمودار گرافیکی پیشرفته", "dlr_chart")
+    .text("🔄 به‌روزرسانی", "dlr_refresh")
+    .row()
+    .text("🔙 بازگشت به منو", "menu_home");
+  await ctx.editMessageText(report.text, { reply_markup: dollarKb, parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "نرخ دلار و طلا به‌روز شد." });
+});
 
 bot.callbackQuery("menu_crypto", async (ctx) => {
   const res = await getCryptoPrices();

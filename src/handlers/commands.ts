@@ -23,7 +23,9 @@ export function getMainMenu(userId: number): InlineKeyboard {
     .text("📝 کارهای روزمره من", "menu_tasks")
     .text("🌤️ آب و هوا", "menu_weather")
     .row()
-    .text("📊 قیمت لحظه‌ای کریپتو", "menu_crypto")
+    .text("💵 قیمت دلار و طلا", "menu_dollar")
+    .text("📊 قیمت کریپتو", "menu_crypto")
+    .row()
     .text("🔍 سرچ و خواندن لینک", "menu_link");
 
   if (CONFIG.ADMIN_IDS.includes(userId)) {
