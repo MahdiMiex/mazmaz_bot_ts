@@ -1,0 +1,8 @@
+node_modules
+data/*.sqlite*
+data/*.db
+mazmaz.db
+.env
+.git
+bot.log
+*.log

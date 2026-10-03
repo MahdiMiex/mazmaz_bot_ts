@@ -1,0 +1,41 @@
+# dependencies (bun install)
+node_modules
+
+# output
+out
+dist
+*.tgz
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+*.log
+bot.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# database & downloads
+data/*.sqlite*
+data/*.db
+mazmaz.db
+downloads/*
+!downloads/.gitkeep
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# IntelliJ & editors
+.idea
+.vscode
+.DS_Store
