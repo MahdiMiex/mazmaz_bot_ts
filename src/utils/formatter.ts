@@ -80,3 +80,12 @@ export function markdownToTelegramHtml(markdown: string): string {
 
   return formatted.trim();
 }
+
+export function escapeHtml(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+

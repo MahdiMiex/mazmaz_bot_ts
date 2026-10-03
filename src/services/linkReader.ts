@@ -115,36 +115,79 @@ export async function fetchAndAnalyzeLink(
  * Directly scrapes and extracts clean readable text from a URL for AI tools (without calling askGemini).
  */
 export async function scrapeWebPageContent(url: string): Promise<string> {
+  const result = await executeFetchPage(url, 4000);
+  if (!result.ok) {
+    return `خطا در باز کردن وب‌سایت: ${result.error}`;
+  }
+  return `لینک: ${result.url}\nمحتوای متنی استخراج‌شده از وب:\n${result.content}`;
+}
+
+// ۱. تعریف اسکیما برای هوش مصنوعی
+export const fetchPageTool = {
+  name: "fetch_page",
+  description: "باز کردن لینک‌های وب و استخراج متن اصلی صفحه بدون بارگذاری تبلیغات و استایل‌ها",
+  parameters: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "آدرس کامل صفحه وب (شامل http:// یا https://)" }
+    },
+    required: ["url"]
+  }
+};
+
+// ۲. تابع استخراج متن از لینک
+export async function executeFetchPage(url: string, maxLength = 4000): Promise<{ ok: boolean; url?: string; content?: string; error?: string }> {
+  // cheerio html parser; upgrade to headless browser if target site is spa/client-rendered
   try {
     const cleanUrl = url.trim();
-    if (!/^https?:\/\//i.test(cleanUrl)) return "آدرس وب‌سایت نامعتبر است.";
+    if (!/^https?:\/\//i.test(cleanUrl)) {
+      return { ok: false, error: "آدرس وب‌سایت نامعتبر است. آدرس باید با http:// یا https:// شروع شود." };
+    }
 
-    const res = await fetch(cleanUrl, {
+    const fetchOptions: any = {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
       },
-      // @ts-ignore
-      agent,
-    });
+      signal: AbortSignal.timeout(10000)
+    };
+    if (agent) {
+      fetchOptions.agent = agent;
+    }
 
-    if (!res.ok) return `خطا در باز کردن صفحه: کد وضعیت HTTP ${res.status}`;
+    const res = await fetch(cleanUrl, fetchOptions);
+
+    if (!res.ok) {
+      return { ok: false, error: `خطای سرور مقصد: کد وضعیت ${res.status}` };
+    }
 
     const html = await res.text();
     const $ = cheerio.load(html);
-    $("script, style, nav, footer, header, noscript, aside, form, svg, iframe").remove();
 
-    const title = $("title").text().trim() || $("h1").first().text().trim() || "بدون عنوان";
-    const bodyText = $("article, main, .content, #content, body")
-      .first()
+    // حذف بخش‌های اضافه
+    $("script, style, noscript, nav, footer, header, svg, iframe").remove();
+
+    const text = $("body")
       .text()
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 3500);
+      .slice(0, maxLength);
 
-    return `عنوان صفحه: ${title}\nلینک: ${cleanUrl}\nمحتوای متنی استخراج‌شده از وب:\n${bodyText}`;
+    if (!text) {
+      return { ok: false, error: "متن قابل استخراجی در این صفحه یافت نشد." };
+    }
+
+    return { ok: true, url: cleanUrl, content: text };
   } catch (err: any) {
-    return `خطا در برقراری ارتباط با وب‌سایت: ${err?.message || err}`;
+    return { ok: false, error: err?.message || "خطا در برقراری ارتباط با سایت" };
   }
 }
+
+// ۳. هندلر اتصال به ایجنت
+export async function handleAgentTool(name: string, args: { url?: string }) {
+  if (name === "fetch_page" && args.url) {
+    return await executeFetchPage(args.url);
+  }
+  return { error: "ابزار نامعتبر" };
+}
+

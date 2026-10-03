@@ -30,9 +30,14 @@ import {
   isUserBanned,
   setUserQuota,
   addQuota,
+  getUserDetailedLogs,
+  getRecentGlobalLogs,
+  getUsersWithRecentChat,
+  getUserMessageCount,
 } from "./db";
 import { ADMIN_REPLY_TARGET } from "./services/feedback";
 import { sendSafeMessage, withTyping } from "./utils/chunker";
+import { escapeHtml } from "./utils/formatter";
 import { downloadMedia, cleanupFile } from "./services/mediaDownloader";
 import { getWeather } from "./services/weather";
 import { getCryptoPrices } from "./services/crypto";
@@ -210,6 +215,119 @@ bot.command(["broadcast", "broadcast@mazmazAgentBot"], async (ctx) => {
   });
 });
 
+async function renderLogsOverview(ctx: any, isEdit = false) {
+  const recentUsers = getUsersWithRecentChat(8);
+  const recentMsgs = getRecentGlobalLogs(5);
+
+  let text = "📜 <b>مرکز پایش لاگ گفتگوهای کاربران:</b>\n\n";
+
+  if (recentUsers.length === 0) {
+    text += "<i>هنوز هیچ پیامی در تاریخچه گفتگوها ثبت نشده است.</i>\n";
+  } else {
+    text += "👥 <b>کاربران با آخرین تعاملات:</b>\n";
+    for (const u of recentUsers) {
+      const uname = u.username ? `@${u.username}` : "بدون یوزرنیم";
+      text += `• <b>${escapeHtml(u.first_name || "کاربر")}</b> (${uname}) | آیدی: <code>${u.user_id}</code> | پیام‌ها: <b>${u.msg_count}</b>\n`;
+    }
+
+    text += "\n⚡ <b>۵ پیام اخیر در کل سیستم:</b>\n";
+    for (const m of recentMsgs) {
+      const sender = m.role === "user" ? `👤 ${escapeHtml(m.first_name || String(m.user_id))}` : "🤖 بات";
+      const snippet = escapeHtml(m.content.length > 50 ? m.content.slice(0, 50) + "..." : m.content);
+      text += `• <b>${sender}</b>: <i>${snippet}</i>\n`;
+    }
+  }
+
+  text += "\n💡 <i>می‌توانید برای مشاهده لاگ یک کاربر خاص دستور زیر را بفرستید:</i>\n" +
+          "<code>/logs USER_ID [تعداد]</code>\n" +
+          "یا از دکمه‌های زیر برای انتخاب سریع استفاده کنید:";
+
+  const kb = new InlineKeyboard();
+  for (const u of recentUsers.slice(0, 6)) {
+    const name = `${u.first_name || ""} ${u.username ? `(@${u.username})` : ""}`.trim() || String(u.user_id);
+    kb.text(`📜 ${name.slice(0, 22)}`, `u_logs:${u.user_id}:15`).row();
+  }
+  kb.text("🔄 مشاهده ۱۵ پیام اخیر عمومی", "logs_recent").row();
+  kb.text("🔙 بازگشت به پنل مدیریت", "menu_admin");
+
+  if (isEdit) {
+    await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+  } else {
+    await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });
+  }
+}
+
+async function renderUserLogsView(ctx: any, targetId: number, count = 15, isEdit = false) {
+  const user = getUserById(targetId);
+  const logs = getUserDetailedLogs(targetId, count);
+  const totalCount = getUserMessageCount(targetId);
+
+  const uname = user?.username ? `@${user.username}` : "ندارد";
+  const name = user ? `${user.first_name} ${user.last_name || ""}`.trim() : `کاربر ${targetId}`;
+
+  if (logs.length === 0) {
+    const emptyText = `📜 <b>لاگ گفتگوی کاربر:</b>\n\n` +
+      `• نام: <b>${escapeHtml(name)}</b> (<code>${targetId}</code>)\n` +
+      `• یوزرنیم: <b>${uname}</b>\n\n` +
+      `<i>هیچ پیامی برای این کاربر در پایگاه‌داده یافت نشد.</i>`;
+
+    const kb = new InlineKeyboard()
+      .text("💬 ارسال پیام به کاربر", `reply_u:${targetId}`)
+      .row()
+      .text("🔙 بازگشت به لیست کاربران", "admin_users");
+
+    if (isEdit) {
+      await ctx.editMessageText(emptyText, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+    } else {
+      await ctx.reply(emptyText, { reply_markup: kb, parse_mode: "HTML" });
+    }
+    return;
+  }
+
+  // Format messages chronologically (logs query returns ORDER BY id DESC, so reverse for natural reading)
+  const chronoLogs = [...logs].reverse();
+
+  let text = `📜 <b>لاگ گفتگوی کاربر:</b> <b>${escapeHtml(name)}</b>\n` +
+    `• آیدی: <code>${targetId}</code> | یوزرنیم: <b>${uname}</b>\n` +
+    `• نمایش <b>${chronoLogs.length}</b> پیام از کل <b>${totalCount}</b> پیام ثبت شده:\n\n` +
+    `────────────────────\n`;
+
+  for (const item of chronoLogs) {
+    const isUser = item.role === "user";
+    const icon = isUser ? "👤 <b>کاربر:</b>" : "🤖 <b>مزمز:</b>";
+    const timeStr = item.created_at ? ` <i>(${item.created_at})</i>` : "";
+    const cleanContent = escapeHtml(item.content.length > 500 ? item.content.slice(0, 500) + "..." : item.content);
+    text += `${icon}${timeStr}\n${cleanContent}\n\n`;
+  }
+  text += `────────────────────`;
+
+  const kb = new InlineKeyboard()
+    .text("➕ ۱۰ سهمیه", `q_add:${targetId}:10`)
+    .text("💬 ارسال پیام", `reply_u:${targetId}`)
+    .row()
+    .text("🔄 به‌روزرسانی لاگ", `u_logs:${targetId}:${count}`)
+    .text("👤 پروفایل کاربر", `u_detail:${targetId}`)
+    .row()
+    .text("📜 مرکز لاگ‌ها", "admin_logs_menu")
+    .text("🔙 پنل ادمین", "menu_admin");
+
+  if (text.length <= 4000) {
+    if (isEdit) {
+      await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(async () => {
+        await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });
+      });
+    } else {
+      await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });
+    }
+  } else {
+    if (isEdit) {
+      await ctx.deleteMessage().catch(() => {});
+    }
+    await sendSafeMessage(ctx, text, { parse_mode: "HTML" });
+    await ctx.reply("🛠️ <b>عملیات مدیریتی برای این کاربر:</b>", { reply_markup: kb, parse_mode: "HTML" });
+  }
+}
+
 bot.command(["admin", "admin@mazmazAgentBot"], async (ctx) => {
   if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
     return ctx.reply("⛔ شما دسترسی به پنل مدیریت ندارید.");
@@ -218,12 +336,30 @@ bot.command(["admin", "admin@mazmazAgentBot"], async (ctx) => {
     .text("📊 آمار و ارقام ربات", "admin_stats")
     .text("👥 مدیریت کاربران و سهمیه‌ها", "admin_users")
     .row()
+    .text("📜 لاگ خصوصی گفتگوهای کاربران", "admin_logs_menu")
+    .row()
     .text("🔙 بازگشت به منوی اصلی", "menu_home");
 
   await ctx.reply("👑 <b>پنل مدیریت اختصاصی ربات mazmaz:</b>", {
     reply_markup: kb,
     parse_mode: "HTML",
   });
+});
+
+bot.command(["logs", "logs@mazmazAgentBot", "userlogs"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
+    return ctx.reply("⛔ دسترسی غیرمجاز. این بخش فقط مختص رئیس مهدی است.");
+  }
+
+  const parts = ctx.message?.text?.trim().split(/\s+/) || [];
+  const targetId = parseInt(parts[1], 10);
+  const count = parseInt(parts[2], 10) || 15;
+
+  if (targetId && !isNaN(targetId)) {
+    return await renderUserLogsView(ctx, targetId, count);
+  }
+
+  return await renderLogsOverview(ctx);
 });
 
 bot.command(["grant_cmd", "grant_cmd@mazmazAgentBot"], async (ctx) => {
@@ -675,6 +811,8 @@ bot.callbackQuery("menu_admin", async (ctx) => {
     .text("📊 آمار و ارقام ربات", "admin_stats")
     .text("👥 مدیریت کاربران و سهمیه‌ها", "admin_users")
     .row()
+    .text("📜 لاگ خصوصی گفتگوهای کاربران", "admin_logs_menu")
+    .row()
     .text("🔙 بازگشت به منوی اصلی", "menu_home");
 
   await ctx.editMessageText("👑 <b>پنل مدیریت اختصاصی ربات mazmaz:</b>", {
@@ -713,7 +851,7 @@ bot.callbackQuery("admin_users", async (ctx) => {
   const users = getAllUsers();
 
   const lines = [
-    "👥 <b>مدیریت کاربران و سهمیه‌ها:</b>\nبرای ویرایش سهمیه، میوت یا بن کردن، کاربر مورد نظر را انتخاب کنید:\n",
+    "👥 <b>مدیریت کاربران و سهمیه‌ها:</b>\nبرای ویرایش سهمیه، میوت، بن یا مشاهده لاگ، کاربر مورد نظر را انتخاب کنید:\n",
   ];
   const kb = new InlineKeyboard();
 
@@ -758,6 +896,8 @@ bot.callbackQuery(/^u_detail:(\d+)$/, async (ctx) => {
     .text("➕ ۱۰ سهمیه", `q_add:${targetId}:10`)
     .text("➕ ۵۰ سهمیه", `q_add:${targetId}:50`)
     .row()
+    .text("📜 مشاهده لاگ پیام‌ها", `u_logs:${targetId}:15`)
+    .row()
     .text("⏳ میوت ۶ ساعته", `mute_u:6:${targetId}`)
     .text("⏳ میوت ۲۴ ساعته", `mute_u:24:${targetId}`)
     .row()
@@ -800,6 +940,8 @@ bot.callbackQuery(/^q_add:(\d+):(\d+)$/, async (ctx) => {
     .text("➕ ۱۰ سهمیه", `q_add:${targetId}:10`)
     .text("➕ ۵۰ سهمیه", `q_add:${targetId}:50`)
     .row()
+    .text("📜 مشاهده لاگ پیام‌ها", `u_logs:${targetId}:15`)
+    .row()
     .text("⏳ میوت ۶ ساعته", `mute_u:6:${targetId}`)
     .text("⏳ میوت ۲۴ ساعته", `mute_u:24:${targetId}`)
     .row()
@@ -810,6 +952,51 @@ bot.callbackQuery(/^q_add:(\d+):(\d+)$/, async (ctx) => {
     .text("🔙 بازگشت به لیست", "admin_users");
 
   await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+});
+
+bot.callbackQuery(/^u_logs:(\d+)(?::(\d+))?$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const targetId = parseInt(ctx.match[1], 10);
+  const count = ctx.match[2] ? parseInt(ctx.match[2], 10) : 15;
+  await renderUserLogsView(ctx, targetId, count, true);
+  await ctx.answerCallbackQuery().catch(() => {});
+});
+
+bot.callbackQuery("admin_logs_menu", async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  await renderLogsOverview(ctx, true);
+  await ctx.answerCallbackQuery().catch(() => {});
+});
+
+bot.callbackQuery("logs_recent", async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const recentMsgs = getRecentGlobalLogs(15);
+  let text = "⚡ <b>۱۵ پیام اخیر ثبت‌شده در کل سیستم:</b>\n\n";
+  if (recentMsgs.length === 0) {
+    text += "<i>هیچ پیامی ثبت نشده است.</i>";
+  } else {
+    for (const m of [...recentMsgs].reverse()) {
+      const sender = m.role === "user" ? `👤 <b>${escapeHtml(m.first_name || String(m.user_id))}</b> (<code>${m.user_id}</code>)` : "🤖 <b>مزمز</b>";
+      const timeStr = m.created_at ? ` <i>(${m.created_at})</i>` : "";
+      const snippet = escapeHtml(m.content.length > 200 ? m.content.slice(0, 200) + "..." : m.content);
+      text += `${sender}${timeStr}:\n${snippet}\n\n`;
+    }
+  }
+
+  const kb = new InlineKeyboard()
+    .text("🔄 به‌روزرسانی", "logs_recent")
+    .text("📜 مرکز لاگ‌ها", "admin_logs_menu")
+    .row()
+    .text("🔙 پنل ادمین", "menu_admin");
+
+  if (text.length <= 4000) {
+    await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(async () => {
+      await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });
+    });
+  } else {
+    await sendSafeMessage(ctx, text, { parse_mode: "HTML" });
+  }
+  await ctx.answerCallbackQuery().catch(() => {});
 });
 
 // Launch bot!
@@ -826,6 +1013,7 @@ bot.start({
         await bot.api.setMyCommands(
           [
             { command: "admin", description: "👑 پنل مدیریت و آمار سیستم" },
+            { command: "logs", description: "📜 مشاهده لاگ پیام‌ها و گفتگوهای کاربران" },
             { command: "set_quota", description: "🔢 تنظیم سهمیه روزانه کاربر" },
             { command: "add_quota", description: "➕ افزایش سهمیه کاربر" },
             { command: "mute", description: "⏳ میوت کردن کاربر (با ساعت و دلیل)" },

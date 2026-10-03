@@ -289,8 +289,8 @@ export function saveChatMessage(userId: number, role: "user" | "model" | "tool",
     role,
     content.slice(0, 8000), // Cap single message size to prevent bloat
   ]);
-  // Prune to maintain sliding window of max 16 messages per user
-  pruneOldChatHistory(userId, 16);
+  // Prune to maintain sliding window of max 100 messages per user
+  pruneOldChatHistory(userId, 100);
 }
 
 export function getChatHistory(userId: number, limit = 12): Array<{ role: "user" | "model"; content: string; text: string }> {
@@ -306,12 +306,76 @@ export function getChatHistory(userId: number, limit = 12): Array<{ role: "user"
   }));
 }
 
+export function getUserDetailedLogs(
+  userId: number,
+  limit = 20
+): Array<{ id: number; user_id: number; role: string; content: string; created_at: string }> {
+  return db
+    .query(
+      `SELECT id, user_id, role, content, created_at 
+       FROM chat_history 
+       WHERE user_id = ? 
+       ORDER BY id DESC 
+       LIMIT ?`
+    )
+    .all(userId, limit) as any[];
+}
+
+export function getRecentGlobalLogs(
+  limit = 15
+): Array<{
+  id: number;
+  user_id: number;
+  role: string;
+  content: string;
+  created_at: string;
+  first_name?: string;
+  username?: string;
+}> {
+  return db
+    .query(
+      `SELECT h.id, h.user_id, h.role, h.content, h.created_at, u.first_name, u.username
+       FROM chat_history h
+       LEFT JOIN users u ON h.user_id = u.user_id
+       ORDER BY h.id DESC
+       LIMIT ?`
+    )
+    .all(limit) as any[];
+}
+
+export function getUsersWithRecentChat(
+  limit = 10
+): Array<{
+  user_id: number;
+  first_name: string;
+  username: string;
+  msg_count: number;
+  last_msg_at: string;
+}> {
+  return db
+    .query(
+      `SELECT u.user_id, u.first_name, u.username, COUNT(h.id) as msg_count, MAX(h.created_at) as last_msg_at
+       FROM users u
+       INNER JOIN chat_history h ON u.user_id = h.user_id
+       GROUP BY u.user_id
+       ORDER BY last_msg_at DESC
+       LIMIT ?`
+    )
+    .all(limit) as any[];
+}
+
+export function getUserMessageCount(userId: number): number {
+  const row = db
+    .query("SELECT COUNT(*) as count FROM chat_history WHERE user_id = ?")
+    .get(userId) as any;
+  return row?.count || 0;
+}
 
 export function clearChatHistory(userId: number) {
   db.run("DELETE FROM chat_history WHERE user_id = ?", [userId]);
 }
 
-export function pruneOldChatHistory(userId: number, keepLatest = 16) {
+export function pruneOldChatHistory(userId: number, keepLatest = 100) {
   db.run(
     `DELETE FROM chat_history WHERE user_id = ? AND id NOT IN (
       SELECT id FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT ?

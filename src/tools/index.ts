@@ -1,7 +1,7 @@
 import { getWeather } from "../services/weather";
 import { getCryptoPrices } from "../services/crypto";
 import { queryBenchmark, LMSYS_ARENA_SUMMARY, TOP_HARDWARE_BENCHMARKS } from "../services/benchmarks";
-import { fetchAndAnalyzeLink, scrapeWebPageContent } from "../services/linkReader";
+import { fetchAndAnalyzeLink, scrapeWebPageContent, executeFetchPage } from "../services/linkReader";
 import { searchWeb } from "../services/webSearch";
 import { addTask, getTasks, boostUserQuota } from "../db";
 import { runToolWithLogger } from "../utils/toolLogger";
@@ -18,6 +18,17 @@ export interface ToolDefinition {
 }
 
 export const TOOLS_SCHEMA: ToolDefinition[] = [
+  {
+    name: "fetch_page",
+    description: "باز کردن لینک‌های وب و استخراج متن اصلی صفحه بدون بارگذاری تبلیغات و استایل‌ها",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        url: { type: "STRING", description: "آدرس کامل صفحه وب (شامل http:// یا https://)" },
+      },
+      required: ["url"],
+    },
+  },
   {
     name: "web_search",
     description: "Search Google and the live web for up-to-date real-time news, current events, recent tech facts, documentation, or answers you don't know from memory. Use short, focused keyword queries.",
@@ -123,6 +134,13 @@ export async function executeTool(
             newQuota: res.newQuota,
             message: `سهمیه کاربر ${targetUserId} به میزان ${amount} افزایش یافت. سهمیه جدید: ${res.newQuota}`,
           });
+        });
+      }
+      case "fetch_page": {
+        if (!args.url) return JSON.stringify({ ok: false, error: "آدرس وب‌سایت مشخص نشده است." });
+        return await runToolWithLogger("FETCH_PAGE", args.url, async () => {
+          const res = await executeFetchPage(args.url);
+          return JSON.stringify(res);
         });
       }
       case "web_search": {
