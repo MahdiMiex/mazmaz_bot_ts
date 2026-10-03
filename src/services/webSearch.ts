@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import { HttpsProxyAgent } from "https-proxy-agent";
+import { search, SafeSearchType } from "duck-duck-scrape";
 import { CONFIG } from "../config";
 import { runToolWithLogger } from "../utils/toolLogger";
 
@@ -307,3 +308,66 @@ export async function searchWeb(query: string, maxResults = 3): Promise<string> 
     return output;
   });
 }
+
+export const webSearchTool = {
+  name: "web_search",
+  description: "جستجوی زنده در اینترنت برای اخبار، مستندات و اطلاعات جدید بدون کلید API",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "متن یا کلمه کلیدی جستجو" }
+    },
+    required: ["query"]
+  }
+};
+
+export async function executeWebSearch(
+  query: string,
+  limit = 4
+): Promise<{ ok: boolean; data?: Array<{ title: string; url: string; snippet: string }>; error?: string }> {
+  // scrape first results page directly; upgrade to serp API if bot hits rate limits
+  try {
+    const searchResults = await search(query, {
+      safeSearch: SafeSearchType.OFF
+    });
+
+    if (searchResults && searchResults.results && searchResults.results.length > 0) {
+      const items = searchResults.results.slice(0, limit).map((r) => ({
+        title: r.title,
+        url: r.url,
+        snippet: r.description
+      }));
+      return { ok: true, data: items };
+    }
+  } catch (err: any) {
+    console.warn("[duck-duck-scrape] Primary scrape failed, falling back to multi-tier search engine:", err?.message || err);
+  }
+
+  // Fallback to our multi-tier search engine (Tavily, DuckDuckGo Lite, Brave, Google News RSS)
+  try {
+    const rawFallback = await searchWeb(query, limit);
+    if (rawFallback && !rawFallback.includes("امکان استعلام وب در این لحظه میسر نشد")) {
+      return {
+        ok: true,
+        data: [
+          {
+            title: `نتایج جستجو برای: ${query}`,
+            url: "https://duckduckgo.com/?q=" + encodeURIComponent(query),
+            snippet: rawFallback.slice(0, 800)
+          }
+        ]
+      };
+    }
+    return { ok: false, error: "نتیجه‌ای یافت نشد." };
+  } catch (fallbackErr: any) {
+    return { ok: false, error: fallbackErr?.message || "خطا در برقراری ارتباط با موتور جستجو" };
+  }
+}
+
+export async function handleAgentTool(name: string, args: { query?: string }) {
+  if (name === "web_search" && args.query) {
+    return await executeWebSearch(args.query);
+  }
+  return { error: "ابزار نامعتبر" };
+}
+

@@ -237,6 +237,13 @@ export async function askGemini(userId: number, prompt: string, imageBase64?: st
 5. خروجی را کاملاً تمیز، ساختاریافته، عمیق و متمرکز روی حل مسئله نگه دار تا خوانایی عالی در کلاینت‌های موبایل و دسکتاپ داشته باشد و توکن بیهوده نسوزد.
 6. برای مقایسه یا معرفی ابزارها و ریپازیتوری‌ها، از ساختار تمیز یا جدول استفاده کن.
 
+### قوانین استفاده از ابزار جستجوی وب (web_search):
+- ابزار web_search برای جستجوی وب است.
+- ورودی: query (متن جستجو).
+- زمان استفاده: اطلاعات جدید، اخبار، مشخصات فنی و مواردی که در دیتابیس لوکال نیستی.
+- خروجی ابزار: تیتر و توضیحات خلاصه‌شده وب.
+- نتایج را مختصر و مفید به کاربر اعلام کن.
+
 ### قوانین استفاده از ابزار مرورگر و استخراج صفحات وب (fetch_page):
 - ابزار fetch_page برای باز کردن و خواندن صفحات وب و استخراج متن اصلی صفحه است.
 - ورودی: url (آدرس معتبر وب‌سایت با http:// یا https://).
@@ -277,11 +284,16 @@ export async function askGemini(userId: number, prompt: string, imageBase64?: st
      * **چرا به درد می‌خوره؟:** (یک خط کاربردی و فنی)
      * **نکته طلایی پیاده‌سازی:** (ترفند یا هشدار واقعی)
    - آموزش مفاهیم با مثال‌های کدی ملموس و بدون کپی‌پیست خشک.
-3. **قوانین استفاده از ابزار مرورگر و استخراج صفحات وب (fetch_page):**
+3. **قوانین استفاده از ابزار جستجوی وب (web_search):**
+   - ورودی: query (متن جستجو).
+   - زمان استفاده: اطلاعات جدید، اخبار، مشخصات فنی و مواردی که در دیتابیس لوکال نیستی.
+   - خروجی ابزار: تیتر و توضیحات خلاصه‌شده وب.
+   - نتایج را مختصر و مفید به کاربر اعلام کن.
+4. **قوانین استفاده از ابزار مرورگر و استخراج صفحات وب (fetch_page):**
    - هر زمان کاربر لینکی فرستاد، خواست محتوای سایتی بررسی یا خلاصه شود، یا نیاز به استخراج متن از یک URL بود، مستقیماً ابزار fetch_page را صدا بزن.
    - هرگز نگو «دسترسی به اینترنت ندارم» یا «نمی‌توانم لینک باز کنم».
    - متن استخراج‌شده را تحلیل کن و پاسخ دقیق، خوانا و کاربردی به کاربر بده.
-4. **فرمت پاسخ‌دهی و نگارش (Role: Technical Assistant & Markdown Expert):**
+5. **فرمت پاسخ‌دهی و نگارش (Role: Technical Assistant & Markdown Expert):**
    - All your responses MUST be formatted in clean Telegram-compatible Markdown (headers, bolding, bullet points).
    - هرگز کلمات فارسی را بدون فاصله به هم نچسبان؛ فاصله‌گذاری و نیم‌فاصله‌های استاندارد را رعایت کن.
    - تمامی قطعه‌کدها منحصراً داخل کدباکس و نام فایل‌ها و متغیرها داخل بک‌تیک (\`code\`) قرار گیرند.
@@ -307,11 +319,11 @@ export async function askGemini(userId: number, prompt: string, imageBase64?: st
       },
       {
         name: "web_search",
-        description: "Search Google, Google News, Bing and DuckDuckGo for up-to-date real-time news, current events, recent tech facts, documentation, or answers you don't know from memory. Use short, focused keyword queries.",
+        description: "جستجوی زنده در اینترنت برای اخبار، مستندات و اطلاعات جدید بدون کلید API",
         parameters: {
           type: Type.OBJECT,
           properties: {
-            query: { type: Type.STRING, description: "Short keyword-focused search query (3-5 words max, in English or Persian)" },
+            query: { type: Type.STRING, description: "متن یا کلمه کلیدی جستجو" },
           },
           required: ["query"],
         },

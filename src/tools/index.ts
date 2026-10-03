@@ -2,7 +2,7 @@ import { getWeather } from "../services/weather";
 import { getCryptoPrices } from "../services/crypto";
 import { queryBenchmark, LMSYS_ARENA_SUMMARY, TOP_HARDWARE_BENCHMARKS } from "../services/benchmarks";
 import { fetchAndAnalyzeLink, scrapeWebPageContent, executeFetchPage } from "../services/linkReader";
-import { searchWeb } from "../services/webSearch";
+import { searchWeb, executeWebSearch } from "../services/webSearch";
 import { addTask, getTasks, boostUserQuota } from "../db";
 import { runToolWithLogger } from "../utils/toolLogger";
 import { CONFIG } from "../config";
@@ -31,11 +31,11 @@ export const TOOLS_SCHEMA: ToolDefinition[] = [
   },
   {
     name: "web_search",
-    description: "Search Google and the live web for up-to-date real-time news, current events, recent tech facts, documentation, or answers you don't know from memory. Use short, focused keyword queries.",
+    description: "جستجوی زنده در اینترنت برای اخبار، مستندات و اطلاعات جدید بدون کلید API",
     parameters: {
       type: "OBJECT",
       properties: {
-        query: { type: "STRING", description: "Short keyword-focused search query (3-5 words max, in English or Persian)" },
+        query: { type: "STRING", description: "متن یا کلمه کلیدی جستجو" },
       },
       required: ["query"],
     },
@@ -145,7 +145,10 @@ export async function executeTool(
       }
       case "web_search": {
         const query = args.query || args.q || "";
-        return await searchWeb(query);
+        return await runToolWithLogger("SEARCH", query, async () => {
+          const res = await executeWebSearch(query);
+          return JSON.stringify(res);
+        });
       }
       case "get_weather": {
         const city = args.city || "تهران";

@@ -34,6 +34,11 @@ import {
   getRecentGlobalLogs,
   getUsersWithRecentChat,
   getUserMessageCount,
+  registerOrUpdateGroup,
+  getGroupById,
+  getAllGroups,
+  setGroupStatus,
+  isGroupApproved,
 } from "./db";
 import { ADMIN_REPLY_TARGET } from "./services/feedback";
 import { sendSafeMessage, withTyping } from "./utils/chunker";
@@ -66,6 +71,80 @@ bot.use(accessControlMiddleware);
 bot.catch((err) => {
   const ctx = err.ctx;
   console.warn(`[GLOBAL SAFEGUARD] Handled error in update ${ctx.update?.update_id}:`, (err.error as any)?.message || err.error);
+});
+
+// 1.5 مدیریت دعوت ربات به گروه‌ها (تایید رسمی ادمین و ثبت هویت اد کننده)
+bot.on("my_chat_member", async (ctx) => {
+  const update = ctx.myChatMember;
+  const status = update.new_chat_member.status;
+  const oldStatus = update.old_chat_member.status;
+  const chat = ctx.chat;
+  const addedBy = update.from;
+
+  // ربات به عنوان عضو یا ادمین وارد گروه شد
+  if (
+    (status === "member" || status === "administrator") &&
+    oldStatus !== "member" &&
+    oldStatus !== "administrator"
+  ) {
+    const isGroup = chat.type === "group" || chat.type === "supergroup";
+    if (!isGroup) return;
+
+    const isAdmin = CONFIG.ADMIN_IDS.includes(addedBy.id);
+    const addedByName = `${addedBy.first_name || ""} ${addedBy.last_name || ""}`.trim() || "ناشناس";
+    const addedByUname = addedBy.username || "";
+
+    if (isAdmin) {
+      // اضافه شده توسط خود مهدی: تایید فوری
+      registerOrUpdateGroup(chat.id, chat.title || "گروه", chat.type, addedBy.id, addedByName, addedByUname, "approved");
+      await ctx.reply(
+        `👑 <b>سلام به اعضای محترم گروه «${escapeHtml(chat.title || "گروه")}»!</b>\n` +
+        `من «مزمز» هستم، دستیار هوشمند شما. توسط رئیس مهدی به این گروه اضافه شدم و آماده فعالیتم! 🚀`,
+        { parse_mode: "HTML" }
+      ).catch(() => {});
+      return;
+    }
+
+    // اضافه شده توسط کاربر عادی: وضعیت در انتظار تایید (pending)
+    registerOrUpdateGroup(chat.id, chat.title || "گروه", chat.type, addedBy.id, addedByName, addedByUname, "pending");
+
+    // ارسال اعلان محترمانه به گروه
+    await ctx.reply(
+      `⏳ <b>درود به اعضای محترم گروه «${escapeHtml(chat.title || "گروه")}»!</b>\n\n` +
+      `من «مزمز» هستم؛ ربات اختصاصی هوش مصنوعی.\n` +
+      `⚠️ برای رعایت امنیت و مدیریت منابع سرور، فعالیت من در گروه‌ها نیازمند تایید مستقیم سازنده‌ام (رئیس مهدی) است.\n` +
+      `درخواست عضویت به همراه مشخصات برای مهدی جان ارسال شد. به محض تایید در خدمتتون خواهم بود! ☕️`,
+      { parse_mode: "HTML" }
+    ).catch(() => {});
+
+    // ارسال آلارم اختصاصی برای رئیس مهدی به همراه اطلاعات اد کننده و دکمه‌های تایید/خروج
+    for (const adminId of CONFIG.ADMIN_IDS) {
+      const kb = new InlineKeyboard()
+        .text("✅ تایید و ماندن در گروه", `grp_accept:${chat.id}`)
+        .text("🚪 رد و خروج از گروه", `grp_leave:${chat.id}`);
+
+      const alertText = (
+        `🚨 <b>درخواست عضویت ربات در گروه جدید!</b>\n\n` +
+        `یکی از کاربران ربات را به یک گروه اضافه کرده است:\n\n` +
+        `👥 <b>مشخصات گروه:</b>\n` +
+        `• عنوان گروه: <b>${escapeHtml(chat.title || "بدون عنوان")}</b>\n` +
+        `• آیدی گروه: <code>${chat.id}</code>\n` +
+        `• نوع چت: <code>${chat.type}</code>\n\n` +
+        `👤 <b>مشخصات فرد اضافه کننده:</b>\n` +
+        `• نام: <b>${escapeHtml(addedByName)}</b>\n` +
+        `• یوزرنیم: ${addedByUname ? `@${addedByUname}` : "<i>ندارد</i>"}\n` +
+        `• آیدی عددی: <code>${addedBy.id}</code>\n\n` +
+        `رئیس مهدی عزیز، آیا اجازه فعالیت ربات در این گروه را می‌دهید؟`
+      );
+
+      await ctx.api.sendMessage(adminId, alertText, {
+        reply_markup: kb,
+        parse_mode: "HTML",
+      }).catch((e) => console.warn("Failed to notify admin of group invite:", e?.message));
+    }
+  } else if (status === "left" || status === "kicked") {
+    setGroupStatus(chat.id, "left");
+  }
 });
 
 // 2. Register Commands
@@ -328,6 +407,37 @@ async function renderUserLogsView(ctx: any, targetId: number, count = 15, isEdit
   }
 }
 
+async function renderAdminGroups(ctx: any, isEdit = false) {
+  const groups = getAllGroups();
+  let text = "👥 <b>لیست و مدیریت گروه‌های ربات:</b>\n\n";
+
+  if (groups.length === 0) {
+    text += "<i>ربات در حال حاضر در هیچ گروهی عضو نیست یا گروهی ثبت نشده است.</i>";
+  } else {
+    for (const g of groups.slice(0, 10)) {
+      const statusIcon = g.status === "approved" ? "✅ تایید شده" : g.status === "pending" ? "⏳ در انتظار تایید" : "🚪 خارج شده";
+      text += `• <b>${escapeHtml(g.title)}</b>\n  آیدی: <code>${g.chat_id}</code> | وضعیت: <b>${statusIcon}</b>\n`;
+      if (g.added_by_name) {
+        text += `  اضافه شده توسط: ${escapeHtml(g.added_by_name)} (${g.added_by_username ? `@${g.added_by_username}` : `<code>${g.added_by_id}</code>`})\n`;
+      }
+      text += "\n";
+    }
+  }
+
+  const kb = new InlineKeyboard();
+  for (const g of groups.slice(0, 8)) {
+    const icon = g.status === "approved" ? "✅" : g.status === "pending" ? "⏳" : "🚪";
+    kb.text(`${icon} ${g.title.slice(0, 20)}`, `grp_detail:${g.chat_id}`).row();
+  }
+  kb.text("🔙 بازگشت به پنل ادمین", "menu_admin");
+
+  if (isEdit) {
+    await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+  } else {
+    await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });
+  }
+}
+
 bot.command(["admin", "admin@mazmazAgentBot"], async (ctx) => {
   if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
     return ctx.reply("⛔ شما دسترسی به پنل مدیریت ندارید.");
@@ -336,7 +446,8 @@ bot.command(["admin", "admin@mazmazAgentBot"], async (ctx) => {
     .text("📊 آمار و ارقام ربات", "admin_stats")
     .text("👥 مدیریت کاربران و سهمیه‌ها", "admin_users")
     .row()
-    .text("📜 لاگ خصوصی گفتگوهای کاربران", "admin_logs_menu")
+    .text("👥 مدیریت گروه‌ها", "admin_groups")
+    .text("📜 لاگ گفتگوهای کاربران", "admin_logs_menu")
     .row()
     .text("🔙 بازگشت به منوی اصلی", "menu_home");
 
@@ -344,6 +455,13 @@ bot.command(["admin", "admin@mazmazAgentBot"], async (ctx) => {
     reply_markup: kb,
     parse_mode: "HTML",
   });
+});
+
+bot.command(["groups", "groups@mazmazAgentBot"], async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
+    return ctx.reply("⛔ دسترسی غیرمجاز. این بخش فقط مختص رئیس مهدی است.");
+  }
+  return await renderAdminGroups(ctx);
 });
 
 bot.command(["logs", "logs@mazmazAgentBot", "userlogs"], async (ctx) => {
@@ -811,7 +929,8 @@ bot.callbackQuery("menu_admin", async (ctx) => {
     .text("📊 آمار و ارقام ربات", "admin_stats")
     .text("👥 مدیریت کاربران و سهمیه‌ها", "admin_users")
     .row()
-    .text("📜 لاگ خصوصی گفتگوهای کاربران", "admin_logs_menu")
+    .text("👥 مدیریت گروه‌ها", "admin_groups")
+    .text("📜 لاگ گفتگوهای کاربران", "admin_logs_menu")
     .row()
     .text("🔙 بازگشت به منوی اصلی", "menu_home");
 
@@ -999,6 +1118,100 @@ bot.callbackQuery("logs_recent", async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
 });
 
+bot.callbackQuery("admin_groups", async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  await renderAdminGroups(ctx, true);
+  await ctx.answerCallbackQuery().catch(() => {});
+});
+
+bot.callbackQuery(/^grp_detail:(\-?\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const chatId = parseInt(ctx.match[1], 10);
+  const g = getGroupById(chatId);
+  if (!g) {
+    return ctx.answerCallbackQuery({ text: "گروه یافت نشد." });
+  }
+
+  const statusText = g.status === "approved" ? "✅ تایید شده و فعال" : g.status === "pending" ? "⏳ در انتظار تایید" : "🚪 خارج شده";
+
+  const text = (
+    `👥 <b>اطلاعات گروه:</b>\n\n` +
+    `• عنوان گروه: <b>${escapeHtml(g.title)}</b>\n` +
+    `• آیدی گروه: <code>${g.chat_id}</code>\n` +
+    `• نوع چت: <code>${g.type}</code>\n` +
+    `• وضعیت فعالیت: <b>${statusText}</b>\n` +
+    `• اضافه کننده: <b>${escapeHtml(g.added_by_name)}</b> (${g.added_by_username ? `@${g.added_by_username}` : "ندارد"}) [<code>${g.added_by_id}</code>]\n` +
+    `• تاریخ ثبت: <code>${g.created_at}</code>\n`
+  );
+
+  const kb = new InlineKeyboard();
+  if (g.status !== "approved") {
+    kb.text("✅ تایید عضویت", `grp_accept:${g.chat_id}`).row();
+  }
+  if (g.status !== "left") {
+    kb.text("🚪 خروج از گروه (Leave)", `grp_leave:${g.chat_id}`).row();
+  }
+  kb.text("🔙 بازگشت به لیست گروه‌ها", "admin_groups");
+
+  await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery();
+});
+
+bot.callbackQuery(/^grp_accept:(\-?\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const chatId = parseInt(ctx.match[1], 10);
+  setGroupStatus(chatId, "approved");
+  const grp = getGroupById(chatId);
+  const grpTitle = grp ? grp.title : String(chatId);
+
+  // ارسال پیام خوشامدگویی و تایید در گروه
+  try {
+    await ctx.api.sendMessage(
+      chatId,
+      `🎉 <b>عضویت تایید شد!</b>\nسازنده و رئیس من (مهدی) اجازه فعالیت مزمز در گروه «${escapeHtml(grpTitle)}» را صادر کرد 🚀\nاز این پس می‌توانید با ریپلای روی من یا خطاب مستقیم گفتگو کنید!`,
+      { parse_mode: "HTML" }
+    );
+  } catch (e: any) {
+    console.warn("Could not send approval message to group:", e?.message);
+  }
+
+  await ctx.editMessageText(
+    `✅ <b>گروه «${escapeHtml(grpTitle)}» (<code>${chatId}</code>) تایید شد و ربات در آن فعال است.</b>`,
+    { parse_mode: "HTML" }
+  ).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "گروه تایید شد." });
+});
+
+bot.callbackQuery(/^grp_(?:reject|leave):(\-?\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  const chatId = parseInt(ctx.match[1], 10);
+  const grp = getGroupById(chatId);
+  const grpTitle = grp ? grp.title : String(chatId);
+
+  // ارسال پیام خداحافظی محترمانه در گروه قبل از خروج
+  try {
+    await ctx.api.sendMessage(
+      chatId,
+      `👋 طبق دستور سازنده و مدیر اصلی (مهدی)، من از این گروه خارج می‌شوم. روز خوش!`
+    );
+  } catch {}
+
+  // خروج ربات از گروه
+  try {
+    await ctx.api.leaveChat(chatId);
+  } catch (e: any) {
+    console.warn("Could not leave chat:", e?.message);
+  }
+
+  setGroupStatus(chatId, "left");
+
+  await ctx.editMessageText(
+    `🚪 <b>ربات با موفقیت از گروه «${escapeHtml(grpTitle)}» (<code>${chatId}</code>) خارج شد.</b>`,
+    { parse_mode: "HTML" }
+  ).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "از گروه خارج شد." });
+});
+
 // Launch bot!
 bot.start({
   onStart: async (info) => {
@@ -1013,6 +1226,7 @@ bot.start({
         await bot.api.setMyCommands(
           [
             { command: "admin", description: "👑 پنل مدیریت و آمار سیستم" },
+            { command: "groups", description: "👥 مدیریت و نظارت بر گروه‌ها" },
             { command: "logs", description: "📜 مشاهده لاگ پیام‌ها و گفتگوهای کاربران" },
             { command: "set_quota", description: "🔢 تنظیم سهمیه روزانه کاربر" },
             { command: "add_quota", description: "➕ افزایش سهمیه کاربر" },

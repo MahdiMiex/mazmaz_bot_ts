@@ -1,12 +1,13 @@
 import { Context, NextFunction, InlineKeyboard } from "grammy";
 import { CONFIG } from "../config";
-import { registerOrUpdateUser, checkAndConsumeQuota, canUserUseCommands, isUserBanned, isUserMuted } from "../db";
+import { registerOrUpdateUser, checkAndConsumeQuota, canUserUseCommands, isUserBanned, isUserMuted, isGroupApproved } from "../db";
 
 const NOTIFIED_USERS = new Set<number>();
 
 export async function accessControlMiddleware(ctx: Context, next: NextFunction) {
   const user = ctx.from;
   if (!user) return await next();
+  if (ctx.myChatMember) return await next();
 
   const userId = user.id;
   const isAdmin = CONFIG.ADMIN_IDS.includes(userId);
@@ -14,7 +15,11 @@ export async function accessControlMiddleware(ctx: Context, next: NextFunction) 
   const isGroup = chatType === "group" || chatType === "supergroup";
 
   // Allow approval/rejection callbacks without quota checks
-  if (ctx.callbackQuery?.data?.startsWith("appr:") || ctx.callbackQuery?.data?.startsWith("rejc:")) {
+  if (
+    ctx.callbackQuery?.data?.startsWith("appr:") ||
+    ctx.callbackQuery?.data?.startsWith("rejc:") ||
+    ctx.callbackQuery?.data?.startsWith("grp_")
+  ) {
     return await next();
   }
 
@@ -29,6 +34,30 @@ export async function accessControlMiddleware(ctx: Context, next: NextFunction) 
   if (isAdmin) {
     return await next();
   }
+
+  // 1.0 بررسی تایید گروه توسط مدیر اصلی
+  if (isGroup && !isGroupApproved(ctx.chat!.id)) {
+    const text = ctx.message?.text || "";
+    const isBotCalled =
+      ctx.message?.reply_to_message?.from?.id === ctx.me?.id ||
+      text.includes(`@${ctx.me?.username?.toLowerCase()}`) ||
+      /^(?:(?:سلام|درود|هی|الو|چطوری)\s+)?(?:مزمز|mazmaz)/i.test(text.trim());
+
+    if (isBotCalled) {
+      await ctx.reply(
+        `⚠️ <b>گروه در انتظار تایید مدیریت:</b>\n\n` +
+        `فعالیت مزمز در این گروه نیازمند تایید سازنده و مدیر اصلی (@${CONFIG.CREATOR_USERNAME}) است. درخواست عضویت ثبت شده و پس از بررسی و تایید رئیس، ربات در خدمت شما خواهد بود ☕️`,
+        {
+          parse_mode: "HTML",
+          reply_parameters: ctx.message?.message_id
+            ? { message_id: ctx.message.message_id, allow_sending_without_reply: true }
+            : undefined,
+        }
+      ).catch(() => {});
+    }
+    return;
+  }
+
 
   // 1.1 بررسی مسدودسازی دائم (Ban)
   if (isUserBanned(userId)) {

@@ -89,6 +89,20 @@ db.run(`
   CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history(user_id, id DESC);
 `);
 
+db.run(`
+  CREATE TABLE IF NOT EXISTS groups (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    type TEXT DEFAULT 'group',
+    added_by_id INTEGER,
+    added_by_name TEXT,
+    added_by_username TEXT,
+    status TEXT DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
 
 export function registerOrUpdateUser(
   userId: number,
@@ -493,6 +507,62 @@ export function saveFeedbackReport(
   );
   return result.lastInsertRowid as number;
 }
+
+export interface GroupInfo {
+  chat_id: number;
+  title: string;
+  type: string;
+  added_by_id: number;
+  added_by_name: string;
+  added_by_username: string;
+  status: "pending" | "approved" | "rejected" | "left";
+  created_at: string;
+  updated_at: string;
+}
+
+export function registerOrUpdateGroup(
+  chatId: number,
+  title: string,
+  type = "group",
+  addedById = 0,
+  addedByName = "",
+  addedByUsername = "",
+  status: "pending" | "approved" | "rejected" | "left" = "pending"
+) {
+  const existing = db.query("SELECT * FROM groups WHERE chat_id = ?").get(chatId) as any;
+  if (!existing) {
+    db.run(
+      `INSERT INTO groups (chat_id, title, type, added_by_id, added_by_name, added_by_username, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [chatId, title, type, addedById, addedByName, addedByUsername, status]
+    );
+  } else {
+    db.run(
+      `UPDATE groups 
+       SET title = ?, type = ?, added_by_id = ?, added_by_name = ?, added_by_username = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE chat_id = ?`,
+      [title, type, addedById, addedByName, addedByUsername, status, chatId]
+    );
+  }
+}
+
+export function getGroupById(chatId: number): GroupInfo | null {
+  return (db.query("SELECT * FROM groups WHERE chat_id = ?").get(chatId) as any) || null;
+}
+
+export function getAllGroups(): GroupInfo[] {
+  return db.query("SELECT * FROM groups ORDER BY updated_at DESC, created_at DESC").all() as any[];
+}
+
+export function setGroupStatus(chatId: number, status: "pending" | "approved" | "rejected" | "left") {
+  db.run("UPDATE groups SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?", [status, chatId]);
+}
+
+export function isGroupApproved(chatId: number): boolean {
+  const group = db.query("SELECT status FROM groups WHERE chat_id = ?").get(chatId) as any;
+  return group?.status === "approved";
+}
+
 
 
 
