@@ -198,13 +198,16 @@ export async function askGemini(
       httpOptions: agent ? { agent } : undefined,
     });
 
-    const modelCandidates = [
-      CONFIG.AI_MODEL || "gemini-flash-lite-latest",
+    const rawCandidates = [
+      CONFIG.AI_MODEL,
       "gemini-2.5-flash-lite",
       "gemini-3.5-flash-lite",
-      "gemini-flash-latest",
+      "gemini-flash-lite-latest",
+      "gemini-2.5-flash",
       "gemini-3.8-flash",
+      "gemini-flash-latest",
     ];
+    const modelCandidates = [...new Set(rawCandidates.filter(Boolean))] as string[];
 
     // تعیین سیستم پرامپت پویا بر اساس هویت مخاطب (رئیس مهدی در برابر سایر کاربران)
     const adminSystemInstruction = `شما «مزمز» یا mazmaz هستید؛ یک ربات تلگرام فوق‌العاده هوشمند، فنی، کارکشته و توسعه‌یافته با تکیه بر استک مدرن (TypeScript, grammY, Bun, SQLite و Google Gemini). سازنده و ادمین اصلی شما «مهدی» است.
@@ -434,10 +437,11 @@ export async function askGemini(
     let lastErr: any = null;
 
     for (const m of modelCandidates) {
+      const workingContents = JSON.parse(JSON.stringify(contents));
       try {
         response = await ai.models.generateContent({
           model: m,
-          contents,
+          contents: workingContents,
           config: {
             systemInstruction,
             temperature: 0.6,
@@ -450,8 +454,8 @@ export async function askGemini(
           const call = response.functionCalls[0];
           const toolResult = await executeTool(call.name, call.args || {}, userId, ctx);
 
-          contents.push(response.candidates[0].content);
-          contents.push({
+          workingContents.push(response.candidates[0].content);
+          workingContents.push({
             role: "user",
             parts: [
               {
@@ -465,7 +469,7 @@ export async function askGemini(
 
           const finalRes = await ai.models.generateContent({
             model: m,
-            contents,
+            contents: workingContents,
             config: {
               systemInstruction,
               temperature: 0.6,
@@ -482,7 +486,7 @@ export async function askGemini(
         if (response) break;
       } catch (err: any) {
         lastErr = err;
-        console.warn(`[GEMINI FALLBACK] Model ${m} failed, trying next:`, err?.status || err?.message || err);
+        console.warn(`[GEMINI FALLBACK] Model ${m} failed (${err?.status || err?.message || err}), switching to next model candidate...`);
       }
     }
 
