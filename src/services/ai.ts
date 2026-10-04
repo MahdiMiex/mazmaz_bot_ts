@@ -276,6 +276,14 @@ export async function askGemini(
 - دستورات مدیریتی و حذف پیام فقط در صورتی اجرا شوند که کاربر درخواستدهنده ادمین باشد.
 - پس از اجرای موفق ابزار، وضعیت را کوتاه گزارش کن.
 
+### ابزارهای مدیریتی گروه:
+ابزارهای مدیریتی گروه در دسترس هستند:
+1. \`ban_chat_member\`: برای بن یا اخراج کاربر با شناسه عددی (user_id).
+2. \`mute_chat_member\`: برای میوت و بیصدا کردن کاربر با مشخص کردن مدت زمان (duration_seconds).
+3. \`unmute_chat_member\`: برای رفع محدودیت پیامدادن کاربر.
+اگر پیامی ریپلای شده بود یا کاربر آیدی فرد را فرستاد، شناسه هدف را استخراج کن و تابع متناظر را اجرا نما.
+برای خواندن تمام پیامها در گروه، تیک Group Privacy در BotFather را خاموش کن (/setprivacy -> Disable).
+
 ### ابزارهای وب و اسکرین‌شات:
 1. \`fetch_web_page\`: هر زمان کاربر لینکی فرستاد یا خواست محتوا و اخبار یک سایت را بررسی و خلاصه کنی، این تابع را فراخوانی کن و از خروجی متنی آن برای پاسخ به کاربر استفاده نما.
 2. \`take_web_screenshot\`: هر زمان کاربر درخواست اسکرین‌شات، عکس یا تصویر از یک صفحه وب را داد، این تابع را صدا بزن. نیازی به پردازش فایل نداری؛ عکس مستقیماً توسط تلگرام ارسال می‌شود.`;
@@ -371,6 +379,40 @@ export async function askGemini(
 
     if (isAdmin) {
       functionDeclarations.push(
+        {
+          name: "ban_chat_member",
+          description: "بن یا اخراج دائم کاربر از گروه",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              user_id: { type: Type.NUMBER, description: "آیدی عددی کاربر هدف" },
+            },
+            required: ["user_id"],
+          },
+        },
+        {
+          name: "mute_chat_member",
+          description: "سکوت (میوت) کردن کاربر در گروه برای مدت زمان مشخص",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              user_id: { type: Type.NUMBER, description: "آیدی عددی کاربر هدف" },
+              duration_seconds: { type: Type.NUMBER, description: "مدت زمان میوت به ثانیه (مثلاً ۳۶۰۰ برای ۱ ساعت)" },
+            },
+            required: ["user_id"],
+          },
+        },
+        {
+          name: "unmute_chat_member",
+          description: "رفع محدودیت و باز کردن میوت کاربر در گروه",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              user_id: { type: Type.NUMBER, description: "آیدی عددی کاربر هدف" },
+            },
+            required: ["user_id"],
+          },
+        },
         {
           name: "boost_quota",
           description: "افزایش سهمیه روزانه کاربر توسط ادمین",

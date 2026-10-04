@@ -2,8 +2,46 @@ import { Bot, Context } from "grammy";
 import { db } from "../db";
 import { CONFIG } from "../config";
 
-// ۱. اسکیماهای ابزار برای هوش مصنوعی
+// ۱. اسکیماهای تفکیک‌شده ابزارهای مدیریتی برای هوش مصنوعی
+export const adminToolsDeclaration = [
+  {
+    name: "ban_chat_member",
+    description: "بن یا اخراج دائم کاربر از گروه",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        user_id: { type: "NUMBER", description: "آیدی عددی کاربر هدف" }
+      },
+      required: ["user_id"]
+    }
+  },
+  {
+    name: "mute_chat_member",
+    description: "سکوت (میوت) کردن کاربر در گروه برای مدت زمان مشخص",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        user_id: { type: "NUMBER", description: "آیدی عددی کاربر هدف" },
+        duration_seconds: { type: "NUMBER", description: "مدت زمان میوت به ثانیه (مثلاً ۳۶۰۰ برای ۱ ساعت)" }
+      },
+      required: ["user_id"]
+    }
+  },
+  {
+    name: "unmute_chat_member",
+    description: "رفع محدودیت و باز کردن میوت کاربر در گروه",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        user_id: { type: "NUMBER", description: "آیدی عددی کاربر هدف" }
+      },
+      required: ["user_id"]
+    }
+  }
+];
+
 export const adminToolsSchema = [
+  ...adminToolsDeclaration,
   {
     name: "summarize_chat",
     description: "دریافت تاریخچه پیامهای اخیر گروه برای خلاصهسازی",
@@ -51,13 +89,30 @@ export const adminToolsSchema = [
   }
 ];
 
+// ۲. حافظه ۳۰ پیام اخیر چت (هم کش در حافظه رم، هم دیتابیس پایدار SQLite)
+export const MAX_MESSAGES = 30;
+export const chatMemory = new Map<number, { role: string; text: string; time: number }[]>();
+
+export function saveMessage(chatId: number, role: string, text: string) {
+  const history = chatMemory.get(chatId) || [];
+  history.push({ role, text, time: Date.now() });
+  if (history.length > MAX_MESSAGES) history.shift();
+  chatMemory.set(chatId, history);
+}
+
 // میدلور ذخیره پیامها و مدیریت عضویت در گروهها
 export function setupTrackingMiddleware(bot: Bot) {
   bot.on("message", async (ctx, next) => {
     if (ctx.chat.type === "group" || ctx.chat.type === "supergroup") {
       const text = ctx.message.text || ctx.message.caption || "";
+      const senderName = ctx.from?.first_name || String(ctx.from?.id || 0);
       const senderId = ctx.from?.id || 0;
       const date = ctx.message.date || Math.floor(Date.now() / 1000);
+
+      if (text) {
+        saveMessage(ctx.chat.id, senderName, text);
+      }
+
       try {
         db.prepare(`
           INSERT INTO messages (chat_id, message_id, user_id, text, created_at)
@@ -97,6 +152,66 @@ export async function executeAdminTool(botOrApi: any, ctx: Context | any, name: 
   const api = botOrApi?.api || botOrApi || ctx?.api;
 
   switch (name) {
+    case "ban_chat_member": {
+      if (!currentChatId) return { error: "دستور فقط در گروه قابل اجراست." };
+      const targetUserId = Number(args.user_id);
+      if (!targetUserId || isNaN(targetUserId)) {
+        return { ok: false, error: "شناسه عددی کاربر هدف نامعتبر است." };
+      }
+      try {
+        await api.banChatMember(currentChatId, targetUserId);
+        return { success: true, message: `کاربر ${targetUserId} با موفقیت بن شد.` };
+      } catch (err: any) {
+        return { error: `خطا در اجرای دستور ادمینی: ${err.description || err.message}` };
+      }
+    }
+
+    case "mute_chat_member": {
+      if (!currentChatId) return { error: "دستور فقط در گروه قابل اجراست." };
+      const targetUserId = Number(args.user_id);
+      if (!targetUserId || isNaN(targetUserId)) {
+        return { ok: false, error: "شناسه عددی کاربر هدف نامعتبر است." };
+      }
+      const untilDate = args.duration_seconds 
+        ? Math.floor(Date.now() / 1000) + Number(args.duration_seconds)
+        : 0;
+
+      try {
+        await api.restrictChatMember(currentChatId, targetUserId, {
+          can_send_messages: false,
+          can_send_photos: false,
+          can_send_videos: false,
+          can_send_other_messages: false,
+          can_add_web_page_previews: false,
+        }, {
+          until_date: untilDate
+        });
+        return { success: true, message: `کاربر ${targetUserId} میوت شد.` };
+      } catch (err: any) {
+        return { error: `خطا در اجرای دستور ادمینی: ${err.description || err.message}` };
+      }
+    }
+
+    case "unmute_chat_member": {
+      if (!currentChatId) return { error: "دستور فقط در گروه قابل اجراست." };
+      const targetUserId = Number(args.user_id);
+      if (!targetUserId || isNaN(targetUserId)) {
+        return { ok: false, error: "شناسه عددی کاربر هدف نامعتبر است." };
+      }
+      try {
+        await api.restrictChatMember(currentChatId, targetUserId, {
+          can_send_messages: true,
+          can_send_photos: true,
+          can_send_videos: true,
+          can_send_other_messages: true,
+          can_add_web_page_previews: true,
+        });
+        return { success: true, message: `میوت کاربر ${targetUserId} برداشته شد.` };
+      } catch (err: any) {
+        return { error: `خطا در اجرای دستور ادمینی: ${err.description || err.message}` };
+      }
+    }
+
     case "summarize_chat": {
       if (!currentChatId) return { error: "دستور باید داخل گروه اجرا شود یا شناسه گروه مشخص باشد." };
       const limit = Math.min(args.limit || 50, 100);
@@ -146,7 +261,8 @@ export async function executeAdminTool(botOrApi: any, ctx: Context | any, name: 
             can_send_messages: false,
             can_send_photos: false,
             can_send_videos: false,
-            can_send_other_messages: false
+            can_send_other_messages: false,
+            can_add_web_page_previews: false,
           });
         } else {
           return { ok: false, error: `عملیات نامعتبر: ${action}` };

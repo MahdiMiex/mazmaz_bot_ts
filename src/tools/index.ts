@@ -189,6 +189,9 @@ export async function executeTool(
           return tasks.map((t) => `${t.is_done ? "✅" : "⬜"} ${t.title}`).join("\n");
         });
       }
+      case "ban_chat_member":
+      case "mute_chat_member":
+      case "unmute_chat_member":
       case "summarize_chat":
       case "delete_recent_messages":
       case "moderate_user":
