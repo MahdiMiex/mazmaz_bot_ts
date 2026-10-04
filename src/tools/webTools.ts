@@ -62,21 +62,33 @@ export async function executeWebTool(ctx: Context, name: string, args: any): Pro
         rawUrl = `https://${rawUrl}`;
       }
 
-      const targetUrl = encodeURIComponent(rawUrl);
-      const screenshotApiUrl = `https://api.microlink.io/?url=${targetUrl}&screenshot=true&embed=screenshot.url`;
-
       if (!ctx || !ctx.replyWithPhoto) {
         return { error: "کانتکست چت تلگرام برای ارسال مستقیم عکس در دسترس نیست." };
       }
 
-      // ارسال مستقیم لینک عکس به تلگرام بدون بارگذاری در رم سرور
-      await ctx.replyWithPhoto(screenshotApiUrl, {
+      const targetUrl = encodeURIComponent(rawUrl);
+      // ۱. پارامترهای ضروری برای رندر کامل جاوااسکریپت، سایت‌های SPA و ممانعت از صفحه سفید
+      const primaryUrl = `https://api.microlink.io/?url=${targetUrl}&screenshot=true&embed=screenshot.url&waitForTimeout=2500&waitUntil=networkidle2&viewport.width=1280&viewport.height=800`;
+      const fallbackUrl = `https://image.thum.io/get/width/1280/crop/800/wait/3/noanimate/${rawUrl}`;
+
+      const replyOpts = {
+        caption: `📸 اسکرین‌شات از:\n<code>${rawUrl}</code>`,
+        parse_mode: "HTML" as const,
         reply_parameters: ctx.message?.message_id ? { message_id: ctx.message.message_id } : undefined,
-        reply_to_message_id: ctx.message?.message_id
-      });
-      return { success: true, message: "اسکرینشات با موفقیت ارسال شد." };
+        reply_to_message_id: ctx.message?.message_id,
+      };
+
+      try {
+        await ctx.replyWithPhoto(primaryUrl, replyOpts);
+      } catch (primaryErr: any) {
+        console.warn("[SCREENSHOT] Primary Microlink failed, trying fallback thum.io:", primaryErr?.message || primaryErr);
+        await ctx.replyWithPhoto(fallbackUrl, replyOpts);
+      }
+
+      return { success: true, message: "اسکرینشات با رندر کامل جاوااسکریپت و بدون صفحه سفید ارسال شد." };
     } catch (err: any) {
-      return { error: err?.message || String(err) };
+      console.error("[SCREENSHOT ERROR]:", err?.message || err);
+      return { error: `خطا در دریافت اسکرین‌شات: ${err?.message || String(err)}` };
     }
   }
 
