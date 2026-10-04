@@ -1431,10 +1431,28 @@ bot.start({
           { scope: { type: "chat", chat_id: adminId } }
         ).catch(() => {});
 
-        // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه لیست قابلیت‌های اضافه شده
+        // آماده‌سازی تاریخ و ساعت دقیق به وقت ایران
+        const now = new Date();
+        const dateFa = new Intl.DateTimeFormat("fa-IR", {
+          timeZone: "Asia/Tehran",
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        }).format(now);
+        const timeFa = new Intl.DateTimeFormat("fa-IR", {
+          timeZone: "Asia/Tehran",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }).format(now);
+
+        // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه تاریخ، ساعت و لیست قابلیت‌ها
         await bot.api.sendMessage(
           adminId,
           `🚀 <b>آپدیت جدید مزمز با موفقیت فعال شد!</b>\n\n` +
+          `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
           `📦 <b>لیست قابلیت‌ها و بهبودهای اضافه شده:</b>\n` +
           `• 👥 <b>سیستم تایید عضویت گروه:</b> رویداد <code>my_chat_member</code> فعال شد؛ از این پس با دعوت ربات به هر گروه، فوراً دکمه‌های تایید به پی‌وی شما ارسال می‌شود.\n` +
           `• 📋 <b>مشاهده و مدیریت گروه‌ها:</b> همگام‌سازی کامل دستور <code>/groups</code> و پاسخگویی به درخواست‌های متنی «مدیریت گروه‌ها» با خواندن دیتابیس.\n` +
