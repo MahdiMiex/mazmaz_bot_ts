@@ -7,8 +7,9 @@ import { addTask, getTasks, boostUserQuota } from "../db";
 import { runToolWithLogger } from "../utils/toolLogger";
 import { CONFIG } from "../config";
 import { adminToolsSchema, executeAdminTool, setupTrackingMiddleware } from "./adminTools";
+import { webToolsDeclaration, executeWebTool } from "./webTools";
 
-export { adminToolsSchema, executeAdminTool, setupTrackingMiddleware };
+export { adminToolsSchema, executeAdminTool, setupTrackingMiddleware, webToolsDeclaration, executeWebTool };
 
 export interface ToolDefinition {
   name: string;
@@ -21,6 +22,7 @@ export interface ToolDefinition {
 }
 
 export const TOOLS_SCHEMA: ToolDefinition[] = [
+  ...(webToolsDeclaration as ToolDefinition[]),
   {
     name: "fetch_page",
     description: "باز کردن لینک‌های وب و استخراج متن اصلی صفحه بدون بارگذاری تبلیغات و استایل‌ها",
@@ -138,6 +140,13 @@ export async function executeTool(
             newQuota: res.newQuota,
             message: `سهمیه کاربر ${targetUserId} به میزان ${amount} افزایش یافت. سهمیه جدید: ${res.newQuota}`,
           });
+        });
+      }
+      case "fetch_web_page":
+      case "take_web_screenshot": {
+        return await runToolWithLogger(`WEB_${toolName.toUpperCase()}`, JSON.stringify(args), async () => {
+          const res = await executeWebTool(ctx, toolName, args);
+          return typeof res === "string" ? res : JSON.stringify(res);
         });
       }
       case "fetch_page": {
