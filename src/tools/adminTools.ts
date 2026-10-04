@@ -275,8 +275,12 @@ export async function executeAdminTool(botOrApi: any, ctx: Context | any, name: 
 
     case "manage_bot_chats": {
       if (args.action === "list") {
+        try {
+          const groups = db.prepare("SELECT chat_id, title, type, status, added_by_name FROM groups").all();
+          if (groups.length > 0) return { ok: true, groups, count: groups.length };
+        } catch {}
         const chats = db.prepare("SELECT chat_id, title FROM chats").all();
-        return { ok: true, chats };
+        return { ok: true, groups: chats, count: chats.length };
       } else if (args.action === "leave") {
         const targetChat = args.chat_id || currentChatId;
         if (!targetChat) return { error: "شناسه گروه مشخص نشده است." };

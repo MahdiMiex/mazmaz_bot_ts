@@ -1388,6 +1388,13 @@ bot.callbackQuery(/^grp_(?:reject|leave):(\-?\d+)$/, async (ctx) => {
 
 // Launch bot!
 bot.start({
+  allowed_updates: [
+    "message",
+    "edited_message",
+    "callback_query",
+    "my_chat_member",
+    "chat_member",
+  ],
   onStart: async (info) => {
     console.log(`\n==========================================`);
     console.log(`  🤖 mazmaz is RUNNING on Bun + TypeScript!`);
@@ -1423,6 +1430,21 @@ bot.start({
           ],
           { scope: { type: "chat", chat_id: adminId } }
         ).catch(() => {});
+
+        // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه لیست قابلیت‌های اضافه شده
+        await bot.api.sendMessage(
+          adminId,
+          `🚀 <b>آپدیت جدید مزمز با موفقیت فعال شد!</b>\n\n` +
+          `📦 <b>لیست قابلیت‌ها و بهبودهای اضافه شده:</b>\n` +
+          `• 👥 <b>سیستم تایید عضویت گروه:</b> رویداد <code>my_chat_member</code> فعال شد؛ از این پس با دعوت ربات به هر گروه، فوراً دکمه‌های تایید به پی‌وی شما ارسال می‌شود.\n` +
+          `• 📋 <b>مشاهده و مدیریت گروه‌ها:</b> همگام‌سازی کامل دستور <code>/groups</code> و پاسخگویی به درخواست‌های متنی «مدیریت گروه‌ها» با خواندن دیتابیس.\n` +
+          `• 🛡️ <b>ابزارهای نظارتی گروه:</b> اخراج دائم (<code>ban_chat_member</code>) و میوت زمان‌دار کاربر (<code>mute_chat_member</code>).\n` +
+          `• 🌐 <b>ابزارهای وب:</b> استخراج هوشمند متن صفحات اینترنت (<code>fetch_web_page</code>).\n` +
+          `• 📸 <b>اسکرین‌شات زنده:</b> ارسال مستقیم تصویر صفحات وب بدون درگیر کردن رم سرور (<code>take_web_screenshot</code>).\n` +
+          `• 🧠 <b>مقاوم‌سازی فال‌بک جمینای:</b> پایداری کامل در شرایط ترافیک سرورهای گوگل.\n\n` +
+          `<i>مزمز آنلاین و در خدمت شماست، رئیس!</i>`,
+          { parse_mode: "HTML" }
+        ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));
       }
 
       // مخفی کردن منوی دستورات در تمام گروه‌ها و برای سایر کاربران عادی

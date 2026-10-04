@@ -6,7 +6,7 @@ import { queryBenchmark } from "../services/benchmarks";
 import { getWeather, extractWeatherIntent } from "../services/weather";
 import { getCryptoPrices } from "../services/crypto";
 import { getDollarAndGoldReport } from "../services/currency";
-import { addTask, incrementStat, checkAndConsumeQuota, formatQuotaFooter } from "../db";
+import { addTask, incrementStat, checkAndConsumeQuota, formatQuotaFooter, getAllGroups } from "../db";
 import { CONFIG, updateGeminiApiKey } from "../config";
 import { sendSafeMessage, withTyping } from "../utils/chunker";
 import { markdownToTelegramHtml } from "../utils/formatter";
@@ -86,6 +86,46 @@ export async function handleTextMessage(ctx: Context) {
         { ...replyOpts, parse_mode: "HTML" }
       );
     }
+    return;
+  }
+
+  // دسترسی مستقیم ادمین به لیست و مدیریت گروه‌ها با پیام متنی فارسی
+  if (
+    isAdmin &&
+    !isGroup &&
+    /^(?:مدیریت\s*گروه‌?ها?|لیست\s*گروه‌?ها?|گروه‌?های?\s*(?:من|ربات)|گروه‌?ها(?:\s*رو\s*(?:نشون\s*بده|ببینم))?)$/i.test(text.trim())
+  ) {
+    const groups = getAllGroups();
+    let replyText = "👥 <b>لیست و نظارت بر گروه‌های مزمز:</b>\n\n";
+
+    if (groups.length === 0) {
+      replyText += (
+        `<i>هنوز گروهی در دیتابیس ثبت نشده است.</i>\n\n` +
+        `💡 <b>برای ثبت فوری گروه:</b>\n` +
+        `۱️⃣ یک پیام از گروه را به پی‌وی من فوروارد کنید تا درجا شناسایی و فعال شود!\n` +
+        `۲️⃣ با ارسال یک پیام در گروه یا صدا زدن <code>مزمز</code>، ربات آن را خودکار ثبت می‌کند.\n` +
+        `۳️⃣ با دستور <code>/addgroup &lt;chat_id&gt;</code> گروه را بر اساس آیدی عددی ثبت کنید.`
+      );
+    } else {
+      for (const g of groups.slice(0, 10)) {
+        const statusIcon = g.status === "approved" ? "✅ تایید شده" : g.status === "pending" ? "⏳ در انتظار تایید" : "🚪 خارج شده";
+        replyText += `• <b>${g.title}</b>\n  آیدی: <code>${g.chat_id}</code> | وضعیت: <b>${statusIcon}</b>\n`;
+        if (g.added_by_name) {
+          replyText += `  ثبت‌کننده: ${g.added_by_name} (${g.added_by_username ? `@${g.added_by_username}` : `<code>${g.added_by_id}</code>`})\n`;
+        }
+        replyText += "\n";
+      }
+    }
+
+    const kb = new InlineKeyboard();
+    for (const g of groups.slice(0, 8)) {
+      const icon = g.status === "approved" ? "✅" : g.status === "pending" ? "⏳" : "🚪";
+      kb.text(`${icon} ${g.title.slice(0, 20)}`, `grp_detail:${g.chat_id}`).row();
+    }
+    kb.text("🔄 به‌روزرسانی لیست", "admin_groups");
+    kb.text("🔙 بازگشت به پنل ادمین", "menu_admin");
+
+    await ctx.reply(replyText, { reply_markup: kb, parse_mode: "HTML" });
     return;
   }
 
