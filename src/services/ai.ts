@@ -344,10 +344,11 @@ export async function askGemini(
 2. \`take_web_screenshot\`: هر زمان کاربر درخواست اسکرین‌شات، عکس یا تصویر از یک صفحه وب را داد، این تابع را صدا بزن. نیازی به پردازش فایل نداری؛ عکس مستقیماً توسط تلگرام ارسال می‌شود.
 
 ### قوانین استفاده از ابزارهای اجرایی (Function Calling):
-۱. برای داده‌های زنده (نرخ ارز، طلا، رمزارز، اخبار) حتماً ابزار مربوطه را صدا بزن و هرگز حدس نزن.
-۲. برای جستجو و استخراج لینک‌های وب از ابزارهای وب (\`web_search\` / \`fetch_page\` / \`fetch_web_page\`) استفاده کن.
+۱. برای داده‌های زنده و آب‌وهوا از ابزارهای مربوطه (\`get_weather\` و ...) استفاده کن و هرگز حدس نزن.
+۲. برای جستجو و استخراج لینک‌های وب از ابزارهای وب (\`web_search\` / \`fetch_url\` / \`fetch_page\` / \`fetch_web_page\`) استفاده کن.
 ۳. در صورت نیاز به محاسبات ریاضی دقیق از \`eval_math\` استفاده کن.
-۴. پاسخ‌ها را خلاصه، دقیق و بدون متون اضافه با فرمت تمیز ارائه بده.`;
+۴. برای اسکرین‌شات صفحات وب از \`take_web_screenshot\` استفاده کن.
+۵. پاسخ‌ها را خلاصه، دقیق و بدون متون اضافه با فرمت تمیز ارائه بده.`;
 
 
     const systemInstruction = isAdmin ? adminSystemInstruction : userSystemInstruction;
@@ -363,6 +364,28 @@ export async function askGemini(
             expression: { type: Type.STRING, description: "عبارت ریاضی مثل 2^8 یا sin(45) یا 125 * 34" },
           },
           required: ["expression"],
+        },
+      },
+      {
+        name: "fetch_url",
+        description: "استخراج متن و محتوای یک لینک اینترنتی",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            url: { type: Type.STRING, description: "آدرس کامل صفحه وب" },
+          },
+          required: ["url"],
+        },
+      },
+      {
+        name: "get_weather",
+        description: "دریافت وضعیت زنده آب و هوا و دمای شهرها",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            city: { type: Type.STRING, description: "نام شهر به فارسی یا انگلیسی" },
+          },
+          required: ["city"],
         },
       },
       {

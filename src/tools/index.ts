@@ -36,6 +36,17 @@ export const TOOLS_SCHEMA: ToolDefinition[] = [
     },
   },
   {
+    name: "fetch_url",
+    description: "استخراج متن و محتوای یک لینک اینترنتی",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        url: { type: "STRING", description: "آدرس کامل صفحه وب" },
+      },
+      required: ["url"],
+    },
+  },
+  {
     name: "fetch_page",
     description: "باز کردن لینک‌های وب و استخراج متن اصلی صفحه بدون بارگذاری تبلیغات و استایل‌ها",
     parameters: {
@@ -160,6 +171,13 @@ export async function executeTool(
           return typeof res === "string" ? res : JSON.stringify(res);
         });
       }
+      case "fetch_url": {
+        const url = args?.url || "";
+        return await runToolWithLogger("FETCH_URL", url, async () => {
+          const res = await executeCustomTool("fetch_url", args);
+          return typeof res === "string" ? res : JSON.stringify(res);
+        });
+      }
       case "fetch_web_page":
       case "take_web_screenshot": {
         return await runToolWithLogger(`WEB_${toolName.toUpperCase()}`, JSON.stringify(args), async () => {
@@ -176,10 +194,7 @@ export async function executeTool(
       }
       case "web_search": {
         const query = args.query || args.q || "";
-        return await runToolWithLogger("SEARCH", query, async () => {
-          const res = await executeWebSearch(query);
-          return JSON.stringify(res);
-        });
+        return await searchWeb(query);
       }
       case "get_weather": {
         const city = args.city || "تهران";

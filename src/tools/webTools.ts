@@ -30,16 +30,19 @@ export const webToolsDeclaration = [
 ];
 
 export async function captureWebScreenshot(ctx: Context, url: string, caption?: string) {
-  const targetUrl = url.startsWith("http") ? url : `https://${url}`;
+  let targetUrl = (url || "").trim();
+  if (!targetUrl) throw new Error("آدرس صفحه وب وارد نشده است.");
+  if (!/^https?:\/\//i.test(targetUrl)) {
+    targetUrl = `https://${targetUrl}`;
+  }
 
-  // سرویس سبک ابری بدون درگیری کرومیوم و رم سرور
-  const apiUrl = `https://api.microlink.io?url=${encodeURIComponent(
-    targetUrl
-  )}&screenshot=true&meta=false&embed=screenshot.url&waitForTimeout=1500`;
+  const target = encodeURIComponent(targetUrl);
+  const shotUrl = `https://api.microlink.io/?url=${target}&screenshot=true&meta=false&embed=screenshot.url&waitForTimeout=3000&overlay.background=transparent`;
 
-  await ctx.replyWithPhoto(apiUrl, {
+  await ctx.replyWithPhoto(shotUrl, {
     caption: caption || `📸 اسکرین‌شات از: ${targetUrl}`,
-    reply_to_message_id: ctx.msg?.message_id,
+    reply_parameters: ctx.message?.message_id ? { message_id: ctx.message.message_id } : undefined,
+    reply_to_message_id: ctx.message?.message_id || ctx.msg?.message_id,
   });
 }
 

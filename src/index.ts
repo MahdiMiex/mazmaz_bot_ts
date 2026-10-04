@@ -1477,13 +1477,15 @@ async function launchBotWithResilience() {
                 adminId,
                 `🚀 <b>آپدیت جدید مزمز با موفقیت فعال شد!</b>\n\n` +
                 `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
-                `📦 <b>قابلیت‌ها و ابزارهای جدید این نسخه:</b>\n` +
-                `• 🧮 <b>موتور محاسبات ریاضی و مهندسی (<code>eval_math</code>):</b> افزودن ابزار جدید با پشتیبانی از توان (<code>^</code>)، مثلثات (<code>sin/cos/tan</code> به درجه)، رادیکال و فرمول‌ها با امنیت کامل.\n\n` +
+                `📦 <b>جعبه ابزارهای فعال این نسخه:</b>\n` +
+                `• 🧮 <b>موتور محاسبات ریاضی (<code>eval_math</code>):</b> پشتیبانی از توان (<code>^</code>)، مثلثات زاویه‌ای (<code>sin/cos/tan</code>)، رادیکال و اعتبارسنجی امنیتی.\n` +
+                `• 🔗 <b>استخراج محتوای وب (<code>fetch_url</code>):</b> خواندن و برش بهینه متن صفحات اینترنتی.\n` +
+                `• 🌤️ <b>اطلاعات آب‌وهوا (<code>get_weather</code>):</b> وضعیت زنده دما و شرایط جوی شهرها.\n` +
+                `• 🔍 <b>موتور جستجوی زنده وب (<code>web_search</code>):</b> استعلام چندلایه اخبار، مقالات و رویدادها.\n\n` +
                 `🛠️ <b>باگ‌ها و اصلاحات انجام‌شده در این نسخه:</b>\n` +
-                `• 📸 <b>اصلاح و بهینه‌سازی اسکرین‌شات وب (<code>captureWebScreenshot</code>):</b> رفع باگ تایم‌اوت و صفحه سفید با متد ابری سبک Microlink (با <code>waitForTimeout=1500</code>) و ارسال آنی و مستقیم بدون درگیری رم سرور.\n` +
-                `• 🔄 <b>بازگردانی ابزارها به حالت پایدار و رفع تداخل:</b> حذف ابزارهای تکراری و متداخل (<code>fetch_url</code> و <code>get_weather</code>) و یکپارچه‌سازی ابزارها در موتور اصلی پروژه برای رفع اختلال پاسخ‌های جمینای.\n` +
-                `• 🛡️ <b>مهار قطعی خطای ۴۰۹ (Conflict):</b> راه‌اندازی با سیستم تاب‌آوری <code>launchBotWithResilience</code>، فعال‌سازی <code>drop_pending_updates</code> و هندل کردن سیگنال‌های <code>SIGTERM/SIGINT</code> جهت پایداری کامل هنگام بیلد و جابجایی کانتینر در Railway.\n\n` +
-                `<i>مزمز آنلاین، سبک، سریع و کاملاً آماده خدمت به شماست، رئیس!</i>`,
+                `• 📸 <b>حل مشکل صفحه سفید اسکرین‌شات:</b> تنظیم دقیق <code>waitForTimeout=3000</code> و <code>overlay.background=transparent</code> جهت انتظار کامل برای رندر جاوااسکریپت و استایل‌های وب قبل از ثبت عکس.\n` +
+                `• 🛡️ <b>مهار خطای ۴۰۹ (Conflict):</b> راه‌اندازی با سیستم تاب‌آوری <code>launchBotWithResilience</code>، فعال‌سازی <code>drop_pending_updates</code> و مدیریت سیگنال‌های <code>SIGTERM/SIGINT</code> جهت پایداری کامل در Railway.\n\n` +
+                `<i>مزمز آنلاین، پرسرعت و در خدمت شماست، رئیس!</i>`,
                 { parse_mode: "HTML" }
               ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));
             }
