@@ -1386,91 +1386,131 @@ bot.callbackQuery(/^grp_(?:reject|leave):(\-?\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery({ text: "از گروه خارج شد." });
 });
 
-// Launch bot!
-bot.start({
-  allowed_updates: [
-    "message",
-    "edited_message",
-    "callback_query",
-    "my_chat_member",
-    "chat_member",
-  ],
-  onStart: async (info) => {
-    console.log(`\n==========================================`);
-    console.log(`  🤖 mazmaz is RUNNING on Bun + TypeScript!`);
-    console.log(`  Username: @${info.username} (ID: ${info.id})`);
-    console.log(`==========================================\n`);
-
-    try {
-      // لیست کامل و انحصاری دستورات فقط برای رئیس مهدی در تلگرام نمایش داده می‌شود
-      for (const adminId of CONFIG.ADMIN_IDS) {
-        await bot.api.setMyCommands(
-          [
-            { command: "admin", description: "👑 پنل مدیریت و آمار سیستم" },
-            { command: "groups", description: "👥 مدیریت و نظارت بر گروه‌ها" },
-            { command: "addgroup", description: "➕ ثبت دستی گروه با آیدی" },
-            { command: "logs", description: "📜 مشاهده لاگ پیام‌ها و گفتگوهای کاربران" },
-            { command: "set_quota", description: "🔢 تنظیم سهمیه روزانه کاربر" },
-            { command: "add_quota", description: "➕ افزایش سهمیه کاربر" },
-            { command: "mute", description: "⏳ میوت کردن کاربر (با ساعت و دلیل)" },
-            { command: "unmute", description: "🔊 رفع میوت کاربر" },
-            { command: "ban", description: "🚫 مسدودسازی کامل (بن) کاربر" },
-            { command: "unban", description: "🟢 رفع مسدودسازی کاربر" },
-            { command: "reply_user", description: "💬 ارسال پیام مستقیم به کاربر" },
-            { command: "setkey", description: "🔑 تنظیم کلید هوش مصنوعی" },
-            { command: "broadcast", description: "📢 ارسال پیام همگانی" },
-            { command: "grant_cmd", description: "🔓 اعطای دسترسی اسلش به کاربر" },
-            { command: "revoke_cmd", description: "🔒 لغو دسترسی اسلش کاربر" },
-            { command: "dollar", description: "💵 قیمت دلار، ارز و طلا با نمودار" },
-            { command: "browse", description: "🌐 مرورگر هوشمند وب و خواندن لینک" },
-            { command: "weather", description: "🌤️ وضعیت زنده و پیش‌بینی آب و هوا" },
-            { command: "tasks", description: "📋 مدیریت لیست کارها" },
-            { command: "stop", description: "🛑 توقف گفتگو و پاکسازی" },
-            { command: "history", description: "🧹 پاک کردن حافظه چت" },
-          ],
-          { scope: { type: "chat", chat_id: adminId } }
-        ).catch(() => {});
-
-        // آماده‌سازی تاریخ و ساعت دقیق به وقت ایران
-        const now = new Date();
-        const dateFa = new Intl.DateTimeFormat("fa-IR", {
-          timeZone: "Asia/Tehran",
-          weekday: "long",
-          day: "numeric",
-          month: "long",
-          year: "numeric",
-        }).format(now);
-        const timeFa = new Intl.DateTimeFormat("fa-IR", {
-          timeZone: "Asia/Tehran",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        }).format(now);
-
-        // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه تاریخ، ساعت و لیست قابلیت‌ها
-        await bot.api.sendMessage(
-          adminId,
-          `🚀 <b>آپدیت جدید مزمز با موفقیت فعال شد!</b>\n\n` +
-          `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
-          `📦 <b>لیست قابلیت‌ها و بهبودهای اضافه شده:</b>\n` +
-          `• 👥 <b>سیستم تایید عضویت گروه:</b> رویداد <code>my_chat_member</code> فعال شد؛ از این پس با دعوت ربات به هر گروه، فوراً دکمه‌های تایید به پی‌وی شما ارسال می‌شود.\n` +
-          `• 📋 <b>مشاهده و مدیریت گروه‌ها:</b> همگام‌سازی کامل دستور <code>/groups</code> و پاسخگویی به درخواست‌های متنی «مدیریت گروه‌ها» با خواندن دیتابیس.\n` +
-          `• 🛡️ <b>ابزارهای نظارتی گروه:</b> اخراج دائم (<code>ban_chat_member</code>) و میوت زمان‌دار کاربر (<code>mute_chat_member</code>).\n` +
-          `• 🌐 <b>ابزارهای وب:</b> استخراج هوشمند متن صفحات اینترنت (<code>fetch_web_page</code>).\n` +
-          `• 📸 <b>اسکرین‌شات زنده:</b> ارسال مستقیم تصویر صفحات وب بدون درگیر کردن رم سرور (<code>take_web_screenshot</code>).\n` +
-          `• 🧠 <b>مقاوم‌سازی فال‌بک جمینای:</b> پایداری کامل در شرایط ترافیک سرورهای گوگل.\n\n` +
-          `<i>مزمز آنلاین و در خدمت شماست، رئیس!</i>`,
-          { parse_mode: "HTML" }
-        ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));
-      }
-
-      // مخفی کردن منوی دستورات در تمام گروه‌ها و برای سایر کاربران عادی
-      await bot.api.deleteMyCommands({ scope: { type: "all_group_chats" } }).catch(() => {});
-      await bot.api.setMyCommands([], { scope: { type: "default" } }).catch(() => {});
-      console.log("✅ Exclusive Admin Telegram Commands registered for Mehdi only!");
-    } catch (e: any) {
-      console.warn("⚠️ Could not set bot commands automatically:", e?.message || e);
-    }
-  },
+// مدیریت خاموش‌سازی تمیز کانتینر (Graceful Shutdown) برای جلوگیری از تداخل 409 هنگام دیپلوی مجدد
+process.once("SIGINT", async () => {
+  console.log("🛑 دریافت سیگنال SIGINT، توقف تمیز بات...");
+  try {
+    await bot.stop();
+  } catch {}
+  process.exit(0);
 });
+
+process.once("SIGTERM", async () => {
+  console.log("🛑 دریافت سیگنال SIGTERM (دیپلوی جدید در Railway)، آزادسازی فوری اتصال به تلگرام...");
+  try {
+    await bot.stop();
+  } catch {}
+  process.exit(0);
+});
+
+// اجرای ربات با مکانیزم ضد کرش و تلاش مجدد هوشمند در برابر تداخل 409 کانتینرها
+async function launchBotWithResilience() {
+  const maxRetries = 10;
+  let attempt = 0;
+
+  while (attempt < maxRetries) {
+    try {
+      await bot.start({
+        drop_pending_updates: true,
+        allowed_updates: [
+          "message",
+          "edited_message",
+          "callback_query",
+          "my_chat_member",
+          "chat_member",
+        ],
+        onStart: async (info) => {
+          console.log(`\n==========================================`);
+          console.log(`  🤖 mazmaz is RUNNING on Bun + TypeScript!`);
+          console.log(`  Username: @${info.username} (ID: ${info.id})`);
+          console.log(`==========================================\n`);
+
+          try {
+            // لیست کامل و انحصاری دستورات فقط برای رئیس مهدی در تلگرام نمایش داده می‌شود
+            for (const adminId of CONFIG.ADMIN_IDS) {
+              await bot.api.setMyCommands(
+                [
+                  { command: "admin", description: "👑 پنل مدیریت و آمار سیستم" },
+                  { command: "groups", description: "👥 مدیریت و نظارت بر گروه‌ها" },
+                  { command: "addgroup", description: "➕ ثبت دستی گروه با آیدی" },
+                  { command: "logs", description: "📜 مشاهده لاگ پیام‌ها و گفتگوهای کاربران" },
+                  { command: "set_quota", description: "🔢 تنظیم سهمیه روزانه کاربر" },
+                  { command: "add_quota", description: "➕ افزایش سهمیه کاربر" },
+                  { command: "mute", description: "⏳ میوت کردن کاربر (با ساعت و دلیل)" },
+                  { command: "unmute", description: "🔊 رفع میوت کاربر" },
+                  { command: "ban", description: "🚫 مسدودسازی کامل (بن) کاربر" },
+                  { command: "unban", description: "🟢 رفع مسدودسازی کاربر" },
+                  { command: "reply_user", description: "💬 ارسال پیام مستقیم به کاربر" },
+                  { command: "setkey", description: "🔑 تنظیم کلید هوش مصنوعی" },
+                  { command: "broadcast", description: "📢 ارسال پیام همگانی" },
+                  { command: "grant_cmd", description: "🔓 اعطای دسترسی اسلش به کاربر" },
+                  { command: "revoke_cmd", description: "🔒 لغو دسترسی اسلش کاربر" },
+                  { command: "dollar", description: "💵 قیمت دلار، ارز و طلا با نمودار" },
+                  { command: "browse", description: "🌐 مرورگر هوشمند وب و خواندن لینک" },
+                  { command: "weather", description: "🌤️ وضعیت زنده و پیش‌بینی آب و هوا" },
+                  { command: "tasks", description: "📋 مدیریت لیست کارها" },
+                  { command: "stop", description: "🛑 توقف گفتگو و پاکسازی" },
+                  { command: "history", description: "🧹 پاک کردن حافظه چت" },
+                ],
+                { scope: { type: "chat", chat_id: adminId } }
+              ).catch(() => {});
+
+              // آماده‌سازی تاریخ و ساعت دقیق به وقت ایران
+              const now = new Date();
+              const dateFa = new Intl.DateTimeFormat("fa-IR", {
+                timeZone: "Asia/Tehran",
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              }).format(now);
+              const timeFa = new Intl.DateTimeFormat("fa-IR", {
+                timeZone: "Asia/Tehran",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+              }).format(now);
+
+              // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه تاریخ، ساعت و لیست قابلیت‌ها
+              await bot.api.sendMessage(
+                adminId,
+                `🚀 <b>آپدیت جدید مزمز با موفقیت فعال شد!</b>\n\n` +
+                `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
+                `📦 <b>لیست قابلیت‌ها و بهبودهای اضافه شده:</b>\n` +
+                `• 👥 <b>سیستم تایید عضویت گروه:</b> رویداد <code>my_chat_member</code> فعال شد؛ از این پس با دعوت ربات به هر گروه، فوراً دکمه‌های تایید به پی‌وی شما ارسال می‌شود.\n` +
+                `• 📋 <b>مشاهده و مدیریت گروه‌ها:</b> همگام‌سازی کامل دستور <code>/groups</code> و پاسخگویی به درخواست‌های متنی «مدیریت گروه‌ها» با خواندن دیتابیس.\n` +
+                `• 🛡️ <b>ابزارهای نظارتی گروه:</b> اخراج دائم (<code>ban_chat_member</code>) و میوت زمان‌دار کاربر (<code>mute_chat_member</code>).\n` +
+                `• 🌐 <b>ابزارهای وب:</b> استخراج هوشمند متن صفحات اینترنت (<code>fetch_web_page</code>).\n` +
+                `• 📸 <b>اسکرین‌شات زنده:</b> ارسال مستقیم تصویر صفحات وب بدون درگیر کردن رم سرور (<code>take_web_screenshot</code>).\n` +
+                `• 🧠 <b>مقاوم‌سازی فال‌بک جمینای:</b> پایداری کامل در شرایط ترافیک سرورهای گوگل.\n\n` +
+                `<i>مزمز آنلاین و در خدمت شماست، رئیس!</i>`,
+                { parse_mode: "HTML" }
+              ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));
+            }
+
+            // مخفی کردن منوی دستورات در تمام گروه‌ها و برای سایر کاربران عادی
+            await bot.api.deleteMyCommands({ scope: { type: "all_group_chats" } }).catch(() => {});
+            await bot.api.setMyCommands([], { scope: { type: "default" } }).catch(() => {});
+            console.log("✅ Exclusive Admin Telegram Commands registered for Mehdi only!");
+          } catch (e: any) {
+            console.warn("⚠️ Could not set bot commands automatically:", e?.message || e);
+          }
+        },
+      });
+      break;
+    } catch (err: any) {
+      attempt++;
+      const is409 = err?.error_code === 409 || String(err?.message || "").includes("409");
+      if (is409) {
+        console.warn(`⏳ [Conflict 409] کانتینر قبلی در حال آزادسازی اتصال است. تلاش مجدد (${attempt}/${maxRetries}) در ۴ ثانیه...`);
+        await new Promise((resolve) => setTimeout(resolve, 4000));
+      } else {
+        console.error(`❌ خطای اتصال به تلگرام:`, err?.message || err);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+    }
+  }
+}
+
+launchBotWithResilience();
