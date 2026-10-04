@@ -69,8 +69,41 @@ export async function executeTool(name: string, args: any): Promise<any> {
     }
 
     if (name === "eval_math") {
-      const sanitized = args.expression.replace(/[^0-9+\-*/().^ ]/g, "");
-      return { result: Function(`'use strict'; return (${sanitized})`)() };
+      const expr = String(args?.expression || "").trim();
+      if (!expr) return { error: "عبارت ریاضی وارد نشده است." };
+
+      const identifiers = expr.match(/[a-zA-Z_]+/g) || [];
+      const allowed = new Set(["sin", "cos", "tan", "sqrt", "abs", "log", "round", "ceil", "floor", "pi", "PI", "e", "E"]);
+      for (const id of identifiers) {
+        if (!allowed.has(id)) {
+          return { error: `عملگر یا تابع نامعتبر در عبارت ریاضی: ${id}` };
+        }
+      }
+
+      const sanitized = expr
+        .replace(/×/g, "*")
+        .replace(/÷/g, "/")
+        .replace(/\^/g, "**");
+
+      const scope = {
+        sin: (x: number) => Math.sin((x * Math.PI) / 180),
+        cos: (x: number) => Math.cos((x * Math.PI) / 180),
+        tan: (x: number) => Math.tan((x * Math.PI) / 180),
+        sqrt: Math.sqrt,
+        abs: Math.abs,
+        log: Math.log,
+        round: Math.round,
+        ceil: Math.ceil,
+        floor: Math.floor,
+        pi: Math.PI,
+        PI: Math.PI,
+        e: Math.E,
+        E: Math.E,
+      };
+
+      const fn = new Function(...Object.keys(scope), `"use strict"; return (${sanitized});`);
+      const res = fn(...Object.values(scope));
+      return { expression: expr, result: res };
     }
   } catch (err: any) {
     return { error: `خطا در اجرای ابزار: ${err.message}` };

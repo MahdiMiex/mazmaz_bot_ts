@@ -29,6 +29,20 @@ export const webToolsDeclaration = [
   }
 ];
 
+export async function captureWebScreenshot(ctx: Context, url: string, caption?: string) {
+  const targetUrl = url.startsWith("http") ? url : `https://${url}`;
+
+  // سرویس سبک ابری بدون درگیری کرومیوم و رم سرور
+  const apiUrl = `https://api.microlink.io?url=${encodeURIComponent(
+    targetUrl
+  )}&screenshot=true&meta=false&embed=screenshot.url&waitForTimeout=1500`;
+
+  await ctx.replyWithPhoto(apiUrl, {
+    caption: caption || `📸 اسکرین‌شات از: ${targetUrl}`,
+    reply_to_message_id: ctx.msg?.message_id,
+  });
+}
+
 export async function executeWebTool(ctx: Context, name: string, args: any): Promise<any> {
   if (name === "fetch_web_page") {
     try {
@@ -56,36 +70,14 @@ export async function executeWebTool(ctx: Context, name: string, args: any): Pro
 
   if (name === "take_web_screenshot") {
     try {
-      let rawUrl = (args?.url || "").trim();
+      const rawUrl = (args?.url || "").trim();
       if (!rawUrl) return { error: "آدرس صفحه برای اسکرین‌شات مشخص نشده است." };
-      if (!/^https?:\/\//i.test(rawUrl)) {
-        rawUrl = `https://${rawUrl}`;
-      }
-
       if (!ctx || !ctx.replyWithPhoto) {
         return { error: "کانتکست چت تلگرام برای ارسال مستقیم عکس در دسترس نیست." };
       }
 
-      const targetUrl = encodeURIComponent(rawUrl);
-      // ۱. پارامترهای ضروری برای رندر کامل جاوااسکریپت، سایت‌های SPA و ممانعت از صفحه سفید
-      const primaryUrl = `https://api.microlink.io/?url=${targetUrl}&screenshot=true&embed=screenshot.url&waitForTimeout=2500&waitUntil=networkidle2&viewport.width=1280&viewport.height=800`;
-      const fallbackUrl = `https://image.thum.io/get/width/1280/crop/800/wait/3/noanimate/${rawUrl}`;
-
-      const replyOpts = {
-        caption: `📸 اسکرین‌شات از:\n<code>${rawUrl}</code>`,
-        parse_mode: "HTML" as const,
-        reply_parameters: ctx.message?.message_id ? { message_id: ctx.message.message_id } : undefined,
-        reply_to_message_id: ctx.message?.message_id,
-      };
-
-      try {
-        await ctx.replyWithPhoto(primaryUrl, replyOpts);
-      } catch (primaryErr: any) {
-        console.warn("[SCREENSHOT] Primary Microlink failed, trying fallback thum.io:", primaryErr?.message || primaryErr);
-        await ctx.replyWithPhoto(fallbackUrl, replyOpts);
-      }
-
-      return { success: true, message: "اسکرینشات با رندر کامل جاوااسکریپت و بدون صفحه سفید ارسال شد." };
+      await captureWebScreenshot(ctx, rawUrl);
+      return { success: true, message: "اسکرین‌شات با موفقیت ارسال شد." };
     } catch (err: any) {
       console.error("[SCREENSHOT ERROR]:", err?.message || err);
       return { error: `خطا در دریافت اسکرین‌شات: ${err?.message || String(err)}` };

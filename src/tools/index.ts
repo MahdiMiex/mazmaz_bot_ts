@@ -8,6 +8,7 @@ import { runToolWithLogger } from "../utils/toolLogger";
 import { CONFIG } from "../config";
 import { adminToolsSchema, executeAdminTool, setupTrackingMiddleware } from "./adminTools";
 import { webToolsDeclaration, executeWebTool } from "./webTools";
+import { executeTool as executeCustomTool } from "../tools";
 
 export { adminToolsSchema, executeAdminTool, setupTrackingMiddleware, webToolsDeclaration, executeWebTool };
 
@@ -23,6 +24,17 @@ export interface ToolDefinition {
 
 export const TOOLS_SCHEMA: ToolDefinition[] = [
   ...(webToolsDeclaration as ToolDefinition[]),
+  {
+    name: "eval_math",
+    description: "محاسبه عبارات ریاضی و مهندسی",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        expression: { type: "STRING", description: "عبارت ریاضی مثل 2^8 یا sin(45)" },
+      },
+      required: ["expression"],
+    },
+  },
   {
     name: "fetch_page",
     description: "باز کردن لینک‌های وب و استخراج متن اصلی صفحه بدون بارگذاری تبلیغات و استایل‌ها",
@@ -140,6 +152,12 @@ export async function executeTool(
             newQuota: res.newQuota,
             message: `سهمیه کاربر ${targetUserId} به میزان ${amount} افزایش یافت. سهمیه جدید: ${res.newQuota}`,
           });
+        });
+      }
+      case "eval_math": {
+        return await runToolWithLogger("EVAL_MATH", JSON.stringify(args), async () => {
+          const res = await executeCustomTool("eval_math", args);
+          return typeof res === "string" ? res : JSON.stringify(res);
         });
       }
       case "fetch_web_page":

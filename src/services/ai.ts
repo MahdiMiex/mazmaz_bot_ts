@@ -6,7 +6,6 @@ import { getActiveGeminiKey, markKeyCooldown } from "./resilience";
 import { getWeather, extractWeatherIntent } from "./weather";
 import { executeTool } from "../tools/index";
 import { webToolsDeclaration } from "../tools/webTools";
-import { toolDeclarations, executeTool as executeCustomTool } from "../tools.ts";
 
 // راه‌اندازی پروکسی (پشتیبانی از v2rayN لوکال یا متغیرهای محیطی)
 const proxyUrl = CONFIG.USE_PROXY ? CONFIG.PROXY_URL : (process.env.HTTPS_PROXY || process.env.HTTP_PROXY);
@@ -345,9 +344,9 @@ export async function askGemini(
 2. \`take_web_screenshot\`: هر زمان کاربر درخواست اسکرین‌شات، عکس یا تصویر از یک صفحه وب را داد، این تابع را صدا بزن. نیازی به پردازش فایل نداری؛ عکس مستقیماً توسط تلگرام ارسال می‌شود.
 
 ### قوانین استفاده از ابزارهای اجرایی (Function Calling):
-۱. برای داده‌های زنده (نرخ ارز، طلا، رمزارز، هواشناسی، اخبار) حتماً ابزار مربوطه را صدا بزن و هرگز حدس نزن.
-۲. برای جستجو، استخراج لینک، یا اطلاعات محصول دیجیکالا از ابزار وب (web_search / fetch_url / fetch_page) استفاده کن.
-۳. در صورت نیاز به محاسبات ریاضی پیچیده از eval_math استفاده کن.
+۱. برای داده‌های زنده (نرخ ارز، طلا، رمزارز، اخبار) حتماً ابزار مربوطه را صدا بزن و هرگز حدس نزن.
+۲. برای جستجو و استخراج لینک‌های وب از ابزارهای وب (\`web_search\` / \`fetch_page\` / \`fetch_web_page\`) استفاده کن.
+۳. در صورت نیاز به محاسبات ریاضی دقیق از \`eval_math\` استفاده کن.
 ۴. پاسخ‌ها را خلاصه، دقیق و بدون متون اضافه با فرمت تمیز ارائه بده.`;
 
 
@@ -355,6 +354,17 @@ export async function askGemini(
 
     const functionDeclarations: any[] = [
       ...(webToolsDeclaration as any[]),
+      {
+        name: "eval_math",
+        description: "محاسبه دقیق عبارات ریاضی و فرمول‌های مهندسی",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            expression: { type: Type.STRING, description: "عبارت ریاضی مثل 2^8 یا sin(45) یا 125 * 34" },
+          },
+          required: ["expression"],
+        },
+      },
       {
         name: "fetch_page",
         description: "باز کردن لینک‌های وب و استخراج متن اصلی صفحه بدون بارگذاری تبلیغات و استایل‌ها. هر زمان کاربر لینکی فرستاد، خواست محتوای صفحه‌ای خلاصه یا بررسی شود، مستقیماً این ابزار را صدا بزن.",
@@ -389,15 +399,6 @@ export async function askGemini(
         },
       },
     ];
-
-    // اتصال ابزارهای ماژول tools.ts (بدون تغییر در متن و لاجیک ابزار جستجوی وب)
-    const existingToolNames = new Set(functionDeclarations.map((d: any) => d.name));
-    for (const tool of toolDeclarations) {
-      if (!existingToolNames.has(tool.name)) {
-        functionDeclarations.push(tool);
-        existingToolNames.add(tool.name);
-      }
-    }
 
     if (isAdmin) {
       functionDeclarations.push(
@@ -516,24 +517,7 @@ export async function askGemini(
         // اجرای ابزارها (Function Calling) با لاگر ترمینالی و پاسخ به مدل
         if (response?.functionCalls && response.functionCalls.length > 0) {
           const call = response.functionCalls[0];
-          let toolResult: any;
-
-          // برای ابزارهای جدید ماژول tools.ts (مثل eval_math و fetch_url)
-          if (call.name === "eval_math" || call.name === "fetch_url") {
-            const res = await executeCustomTool(call.name, call.args || {});
-            toolResult = typeof res === "string" ? res : JSON.stringify(res);
-          } else {
-            // برای جستجو و سایر ابزارها از موتور کامل‌تر پروژه استفاده می‌شود
-            toolResult = await executeTool(call.name, call.args || {}, userId, ctx);
-
-            // در صورتی که ابزار در ماژول اصلی ناشناخته بود، از موتور tools.ts کمک گرفته می‌شود
-            if (typeof toolResult === "string" && toolResult.startsWith("ابزار ناشناخته")) {
-              const fallbackRes = await executeCustomTool(call.name, call.args || {});
-              if (fallbackRes && !fallbackRes.error) {
-                toolResult = typeof fallbackRes === "string" ? fallbackRes : JSON.stringify(fallbackRes);
-              }
-            }
-          }
+          const toolResult = await executeTool(call.name, call.args || {}, userId, ctx);
 
           workingContents.push(response.candidates[0].content);
           workingContents.push({
