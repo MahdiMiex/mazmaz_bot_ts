@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { HttpsProxyAgent } from "https-proxy-agent";
-import { getChatHistory, saveChatMessage, clearChatHistory } from "../database";
+import { getChatHistory, saveChatMessage, clearChatHistory, getSetting } from "../database";
 import { CONFIG } from "../config";
 import { getActiveGeminiKey, markKeyCooldown } from "./resilience";
 import { getWeather, extractWeatherIntent } from "./weather";
@@ -352,7 +352,11 @@ export async function askGemini(
 ۵. پاسخ‌ها را خلاصه، دقیق و بدون متون اضافه با فرمت تمیز ارائه بده.`;
 
 
-    const systemInstruction = isAdmin ? adminSystemInstruction : userSystemInstruction;
+    const customInstruction = getSetting("custom_instruction");
+    const baseInstruction = isAdmin ? adminSystemInstruction : userSystemInstruction;
+    const systemInstruction = customInstruction
+      ? `${baseInstruction}\n\n### دستورالعمل تکمیلی و رفتاری ادمین:\n${customInstruction}`
+      : baseInstruction;
 
     const functionDeclarations: any[] = [
       ...(webToolsDeclaration as any[]),

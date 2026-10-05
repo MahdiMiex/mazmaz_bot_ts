@@ -46,5 +46,11 @@
       "daily_quota": 24,
       "can_use_commands": 0
     }
+  ],
+  "settings": [
+    {
+      "key": "custom_footer",
+      "value": ""
+    }
   ]
 }

@@ -118,6 +118,11 @@ db.run(`
     chat_id INTEGER PRIMARY KEY,
     title TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS bot_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
 `);
 
 try {
@@ -127,13 +132,32 @@ try {
   `);
 } catch {}
 
+export function getSetting(key: string, defaultValue = ""): string {
+  try {
+    const row = db.query("SELECT value FROM bot_settings WHERE key = ?").get(key) as any;
+    return row?.value !== undefined && row?.value !== null ? row.value : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+}
+
+export function setSetting(key: string, value: string): void {
+  try {
+    db.run("INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)", [key, value]);
+    saveStateSnapshot();
+  } catch (e: any) {
+    console.warn("Failed to set bot setting:", e?.message);
+  }
+}
+
 const SNAPSHOT_PATH = path.resolve(import.meta.dir, "../data/persistent_state.json");
 
 export function saveStateSnapshot() {
   try {
     const groups = db.query("SELECT * FROM groups WHERE status = 'approved'").all() as any[];
     const approvedUsers = db.query("SELECT user_id, username, first_name, last_name, is_approved, daily_quota, can_use_commands FROM users WHERE is_approved = 1").all() as any[];
-    fs.writeFileSync(SNAPSHOT_PATH, JSON.stringify({ groups, users: approvedUsers }, null, 2), "utf-8");
+    const settings = db.query("SELECT key, value FROM bot_settings").all() as any[];
+    fs.writeFileSync(SNAPSHOT_PATH, JSON.stringify({ groups, users: approvedUsers, settings }, null, 2), "utf-8");
   } catch (e: any) {
     console.warn("Failed to write persistent_state.json:", e?.message);
   }
@@ -161,6 +185,11 @@ export function restoreStateSnapshot() {
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [u.user_id, u.username, u.first_name, u.last_name, u.is_approved, u.daily_quota, u.can_use_commands]
         );
+      }
+    }
+    if (Array.isArray(data.settings)) {
+      for (const s of data.settings) {
+        db.run("INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)", [s.key, s.value]);
       }
     }
     console.log("✅ Restored persistent state for groups and approved users!");

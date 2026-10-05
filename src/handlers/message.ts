@@ -6,7 +6,7 @@ import { queryBenchmark } from "../services/benchmarks";
 import { getWeather, extractWeatherIntent } from "../services/weather";
 import { getCryptoPrices } from "../services/crypto";
 import { getDollarAndGoldReport } from "../services/currency";
-import { addTask, incrementStat, checkAndConsumeQuota, formatQuotaFooter, getAllGroups, db } from "../db";
+import { addTask, incrementStat, checkAndConsumeQuota, formatQuotaFooter, getAllGroups, db, getSetting, setSetting, setGroupStatus } from "../db";
 import { CONFIG, updateGeminiApiKey } from "../config";
 import { sendSafeMessage, withTyping } from "../utils/chunker";
 import { markdownToTelegramHtml, escapeHtml } from "../utils/formatter";
@@ -143,13 +143,11 @@ export async function handleTextMessage(ctx: Context) {
     const isDirectCallAtStart = /^(?:(?:سلام|درود|هی|الو|چطوری|ey|hi|hello)\s+)?(?:مزمز|mazmaz)(?:[،,:.!؟?\s]|$)/i.test(text.trim());
     const isCommand = text.startsWith("/");
 
-    // اجازه فوری به دستورات ادمین (مهدی) در صورت ریپلای به پیام یا عبارات مدیریتی و نظارتی
-    const isAdminGroupAction = isAdmin && (
-      Boolean(ctx.message?.reply_to_message) ||
-      /(?:خلاصه|بن|اخراج|میوت|سکوت|آنبن|آنمیوت|آن‌میوت|حذف|پاکسازی|سهمیه|تسک|استعلام)/i.test(text)
-    );
+    // دستورات صریح مدیریتی ادمین روی ریپلای (صرفاً افعال دستوری مشخص، نه چت عادی یا ریپلای به بات‌های دیگر)
+    const isAdminModAction = isAdmin && Boolean(ctx.message?.reply_to_message) &&
+      /^(?:(?:\/)?(?:ban|mute|unmute)|(?:مزمز|mazmaz)[،,:\s]+)?(?:بن\s*کن|بنش\s*کن|اخراج\s*کن|اخراجش\s*کن|میوت\s*کن|میوتش\s*کن|سکوت|بی‌?صدا|آن‌?میوت\s*کن|آن‌?میوتش\s*کن|رفع\s*سکوت|بن|اخراج|آن‌?میوت)(?:\s+.*)?$/i.test(text.trim());
 
-    if (!isReplyToBot && !isBotMentioned && !isDirectCallAtStart && !isCommand && !isAdminGroupAction) {
+    if (!isReplyToBot && !isBotMentioned && !isDirectCallAtStart && !isCommand && !isAdminModAction) {
       return;
     }
   }
@@ -176,6 +174,70 @@ export async function handleTextMessage(ctx: Context) {
     const picked = greetings[Math.floor(Math.random() * greetings.length)];
     await ctx.reply(picked, replyOpts);
     return;
+  }
+
+  // دستور خروج ربات از گروه به فرمان ادمین (مهدی)
+  if (isAdmin && isGroup) {
+    const isLeaveIntent = /^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:\/leave|از\s*گروه\s*برو|لفت\s*بده|برو\s*بیرون|خروج\s*از\s*گروه)$/i.test(cleanText || text);
+    if (isLeaveIntent) {
+      await ctx.reply("🫡 با دستور رئیس مهدی، من با احترام از گروه خارج می‌شم. روز همگی خوش! 👋", replyOpts);
+      setGroupStatus(ctx.chat!.id, "left");
+      try {
+        await ctx.api.leaveChat(ctx.chat!.id);
+      } catch (err: any) {
+        console.warn("Failed to leave chat:", err?.message);
+      }
+      return;
+    }
+  }
+
+  // تنظیمات پویای ربات توسط ادمین در چت تلگرام
+  if (isAdmin) {
+    // ۱. تنظیم پسوند سفارشی انتهای پیام‌ها
+    const setFooterMatch = (cleanText || text).match(/^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:آخر\s*پیامت\s*بنویس|پسوند\s*پیام(?:ت)?\s*(?:رو\s*بذار|:)?)\s*[:：]?\s*(.+)$/i);
+    if (setFooterMatch) {
+      const footerVal = setFooterMatch[1].trim();
+      setSetting("custom_footer", footerVal);
+      await ctx.reply(`✅ <b>پسوند پیام‌ها با موفقیت ذخیره شد، رئیس!</b>\n\nاز این پس عبارت زیر انتهای تمام پاسخ‌ها درج می‌شود:\n<blockquote>${escapeHtml(footerVal)}</blockquote>`, {
+        ...replyOpts,
+        parse_mode: "HTML",
+      });
+      return;
+    }
+
+    // ۲. حذف یا ریست پسوند پیام‌ها
+    const clearFooterIntent = /^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:حذف\s*پسوند\s*پیام|دیگه\s*آخر\s*پیام(?:ت)?\s*چیزی\s*ننویس|ریست\s*پسوند)$/i.test(cleanText || text);
+    if (clearFooterIntent) {
+      setSetting("custom_footer", "");
+      await ctx.reply("✅ <b>پسوند سفارشی پیام‌ها حذف شد.</b> دیگر متن اضافی در انتهای پاسخ‌ها درج نمی‌شود.", {
+        ...replyOpts,
+        parse_mode: "HTML",
+      });
+      return;
+    }
+
+    // ۳. تنظیم دستورالعمل رفتاری سیستمی هوش مصنوعی
+    const setInstructionMatch = (cleanText || text).match(/^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:دستور\s*(?:رفتاری|سیستمی)|از\s*این\s*به\s*بعد\s*همیشه)\s*[:：]?\s*(.+)$/i);
+    if (setInstructionMatch) {
+      const instructionVal = setInstructionMatch[1].trim();
+      setSetting("custom_instruction", instructionVal);
+      await ctx.reply(`🧠 <b>دستورالعمل رفتاری جدید ثبت شد!</b>\n\nاین دستور به پرامپت سیستمی جمینای اضافه گردید:\n<blockquote>${escapeHtml(instructionVal)}</blockquote>`, {
+        ...replyOpts,
+        parse_mode: "HTML",
+      });
+      return;
+    }
+
+    // ۴. حذف یا ریست دستور رفتاری
+    const clearInstructionIntent = /^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:حذف\s*دستور\s*(?:رفتاری|سیستمی)|ریست\s*دستور\s*(?:رفتاری|سیستمی))$/i.test(cleanText || text);
+    if (clearInstructionIntent) {
+      setSetting("custom_instruction", "");
+      await ctx.reply("✅ <b>دستورالعمل رفتاری سفارشی ریست شد.</b> مدل به تنظیمات کارخانه بازگشت.", {
+        ...replyOpts,
+        parse_mode: "HTML",
+      });
+      return;
+    }
   }
 
   const replyMsg = ctx.message?.reply_to_message;
@@ -620,7 +682,9 @@ export async function handleTextMessage(ctx: Context) {
   const promptToSend = (cleanText || text) + replyContext;
   const rawResponse = await withTyping(ctx, () => askGemini(userId, promptToSend, undefined, ctx));
   const formattedResponse = markdownToTelegramHtml(rawResponse);
-  const finalResponse = `${formattedResponse}${formatQuotaFooter(userId)}`;
+  const customFooter = getSetting("custom_footer");
+  const footerStr = customFooter ? `\n\n${customFooter}` : "";
+  const finalResponse = `${formattedResponse}${footerStr}${formatQuotaFooter(userId)}`;
 
   if (finalResponse.length <= 4000) {
     try {

@@ -1,4 +1,4 @@
-import { Context } from "grammy";
+import { Context, InputFile } from "grammy";
 import { CONFIG } from "../config";
 import { HttpsProxyAgent } from "https-proxy-agent";
 
@@ -36,6 +36,36 @@ export async function captureWebScreenshot(ctx: Context, url: string, caption?: 
     targetUrl = `https://${targetUrl}`;
   }
 
+  // ۱. اگر لینک ورودی مستقیم به فرمت تصویر ختم می‌شود، بدون درگیر کردن مرورگر با sendPhoto ارسال شود
+  const isDirectImage = /\.(jpg|jpeg|png|webp|svg|gif)(\?.*)?$/i.test(targetUrl);
+  if (isDirectImage) {
+    try {
+      await ctx.replyWithPhoto(targetUrl, {
+        caption: caption || `🖼️ تصویر ارسالی`,
+        reply_parameters: ctx.message?.message_id ? { message_id: ctx.message.message_id } : undefined,
+        reply_to_message_id: ctx.message?.message_id || ctx.msg?.message_id,
+      });
+      return;
+    } catch {
+      // در صورتی که سرور تلگرام نتوانست مستقیم دانلود کند (مثلاً هدر رفرر)، بافر را دانلود و ارسال می‌کنیم
+      try {
+        const res = await fetch(targetUrl, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+        });
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer());
+          await ctx.replyWithPhoto(new InputFile(buffer), {
+            caption: caption || `🖼️ تصویر ارسالی`,
+            reply_parameters: ctx.message?.message_id ? { message_id: ctx.message.message_id } : undefined,
+            reply_to_message_id: ctx.message?.message_id || ctx.msg?.message_id,
+          });
+          return;
+        }
+      } catch {}
+    }
+  }
+
+  // ۲. در غیر این صورت: اسکرین‌شات از صفحه وب با API میکرولینک
   const target = encodeURIComponent(targetUrl);
   const shotUrl = `https://api.microlink.io/?url=${target}&screenshot=true&meta=false&embed=screenshot.url&waitForTimeout=3000&overlay.background=transparent`;
 
