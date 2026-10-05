@@ -6,10 +6,10 @@ import { queryBenchmark } from "../services/benchmarks";
 import { getWeather, extractWeatherIntent } from "../services/weather";
 import { getCryptoPrices } from "../services/crypto";
 import { getDollarAndGoldReport } from "../services/currency";
-import { addTask, incrementStat, checkAndConsumeQuota, formatQuotaFooter, getAllGroups } from "../db";
+import { addTask, incrementStat, checkAndConsumeQuota, formatQuotaFooter, getAllGroups, db } from "../db";
 import { CONFIG, updateGeminiApiKey } from "../config";
 import { sendSafeMessage, withTyping } from "../utils/chunker";
-import { markdownToTelegramHtml } from "../utils/formatter";
+import { markdownToTelegramHtml, escapeHtml } from "../utils/formatter";
 import { getSmartReaction } from "../utils/reactions";
 import {
   isBugReport,
@@ -134,7 +134,8 @@ export async function handleTextMessage(ctx: Context) {
   // ۲. منشن شدن رسمی با آیدی (@mazmazAgentBot)
   // ۳. خطاب مستقیم در ابتدای پیام (مثلاً: «مزمز این کد چیه؟» یا «سلام مزمز هوا چطوره؟»)
   // ۴. دستورات با اسلش (/)
-  // ⛔ اگر اسم مزمز وسط جمله باشد (مثل «نظرتون راجع به مزمز چیه؟» یا «چیپس مزمز»)، ربات کاملاً سکوت می‌کند.
+  // ۵. دستورات و مکالمات ادمین (مهدی) به ویژه دستورات مدیریتی یا ریپلای به پیام‌ها
+  // ⛔ اگر اسم مزمز وسط جمله کاربران عادی باشد، ربات کاملاً سکوت می‌کند.
   if (isGroup) {
     const botInfo = ctx.me;
     const isReplyToBot = ctx.message?.reply_to_message?.from?.id === botInfo.id;
@@ -142,7 +143,13 @@ export async function handleTextMessage(ctx: Context) {
     const isDirectCallAtStart = /^(?:(?:سلام|درود|هی|الو|چطوری|ey|hi|hello)\s+)?(?:مزمز|mazmaz)(?:[،,:.!؟?\s]|$)/i.test(text.trim());
     const isCommand = text.startsWith("/");
 
-    if (!isReplyToBot && !isBotMentioned && !isDirectCallAtStart && !isCommand) {
+    // اجازه فوری به دستورات ادمین (مهدی) در صورت ریپلای به پیام یا عبارات مدیریتی و نظارتی
+    const isAdminGroupAction = isAdmin && (
+      Boolean(ctx.message?.reply_to_message) ||
+      /(?:خلاصه|بن|اخراج|میوت|سکوت|آنبن|آنمیوت|آن‌میوت|حذف|پاکسازی|سهمیه|تسک|استعلام)/i.test(text)
+    );
+
+    if (!isReplyToBot && !isBotMentioned && !isDirectCallAtStart && !isCommand && !isAdminGroupAction) {
       return;
     }
   }
@@ -168,6 +175,149 @@ export async function handleTextMessage(ctx: Context) {
     ];
     const picked = greetings[Math.floor(Math.random() * greetings.length)];
     await ctx.reply(picked, replyOpts);
+    return;
+  }
+
+  const replyMsg = ctx.message?.reply_to_message;
+  const replyUser = replyMsg?.from;
+
+  // دستورات مستقیم و پرسرعت مدیریتی ادمین (مهدی) در گروه روی پیام‌های ریپلای‌شده
+  if (isAdmin && isGroup && replyUser) {
+    // ۱. دستور بن / اخراج دائم از گروه
+    const isBanIntent = /^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:\/ban|بن\s*کن|بنش\s*کن|اخراج\s*کن|اخراجش\s*کن|بن|اخراج)$/i.test(cleanText || text);
+    if (isBanIntent) {
+      if (replyUser.id === ctx.me.id) {
+        await ctx.reply("😅 داداش من ربات خودتم، منو بن نکن!", replyOpts);
+        return;
+      }
+      if (CONFIG.ADMIN_IDS.includes(replyUser.id)) {
+        await ctx.reply("👑 رئیس، نمی‌تونید خودتون یا سایر ادمین‌ها رو بن کنید!", replyOpts);
+        return;
+      }
+      try {
+        await ctx.api.banChatMember(ctx.chat!.id, replyUser.id);
+        const nameEsc = escapeHtml(replyUser.first_name || "کاربر");
+        await ctx.reply(
+          `🔨 <b>کاربر <a href="tg://user?id=${replyUser.id}">${nameEsc}</a> (<code>${replyUser.id}</code>) با موفقیت از گروه اخراج و بن دائم شد.</b>`,
+          { ...replyOpts, parse_mode: "HTML" }
+        );
+      } catch (err: any) {
+        await ctx.reply(`❌ خطا در اخراج کاربر: ${err?.description || err?.message || err}`, replyOpts);
+      }
+      return;
+    }
+
+    // ۲. دستور میوت / سکوت
+    const isMuteIntent = /^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:\/mute|میوت\s*کن|میوتش\s*کن|سکوت|بی‌?صدا)(?:\s+(.+))?$/i.test(cleanText || text);
+    if (isMuteIntent) {
+      if (replyUser.id === ctx.me.id || CONFIG.ADMIN_IDS.includes(replyUser.id)) {
+        await ctx.reply("👑 اعمال محدودیت روی ربات یا ادمین‌ها مجاز نیست.", replyOpts);
+        return;
+      }
+      const match = (cleanText || text).match(/^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:\/mute|میوت\s*کن|میوتش\s*کن|سکوت|بی‌?صدا)(?:\s+(.+))?$/i);
+      const durationArg = match?.[1]?.trim() || "";
+      let durationSeconds = 3600;
+      let durationLabel = "۱ ساعت";
+
+      if (/(\d+)\s*(?:روز|day|d)/i.test(durationArg)) {
+        const d = parseInt(durationArg.match(/(\d+)/)![1], 10);
+        durationSeconds = d * 86400;
+        durationLabel = `${d} روز`;
+      } else if (/(\d+)\s*(?:ساعت|hour|h)/i.test(durationArg)) {
+        const h = parseInt(durationArg.match(/(\d+)/)![1], 10);
+        durationSeconds = h * 3600;
+        durationLabel = `${h} ساعت`;
+      } else if (/(\d+)\s*(?:دقیقه|min|m)/i.test(durationArg)) {
+        const m = parseInt(durationArg.match(/(\d+)/)![1], 10);
+        durationSeconds = m * 60;
+        durationLabel = `${m} دقیقه`;
+      }
+
+      const untilDate = Math.floor(Date.now() / 1000) + durationSeconds;
+      try {
+        await ctx.api.restrictChatMember(ctx.chat!.id, replyUser.id, {
+          can_send_messages: false,
+          can_send_photos: false,
+          can_send_videos: false,
+          can_send_other_messages: false,
+          can_add_web_page_previews: false,
+        }, {
+          until_date: untilDate,
+        });
+        const nameEsc = escapeHtml(replyUser.first_name || "کاربر");
+        await ctx.reply(
+          `🔇 <b>کاربر <a href="tg://user?id=${replyUser.id}">${nameEsc}</a> (<code>${replyUser.id}</code>) به مدت ${durationLabel} بی‌صدا (Mute) شد.</b>`,
+          { ...replyOpts, parse_mode: "HTML" }
+        );
+      } catch (err: any) {
+        await ctx.reply(`❌ خطا در میوت کردن کاربر: ${err?.description || err?.message || err}`, replyOpts);
+      }
+      return;
+    }
+
+    // ۳. دستور آن‌میوت / رفع سکوت
+    const isUnmuteIntent = /^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:\/unmute|آن‌?میوت\s*کن|آن‌?میوتش\s*کن|رفع\s*سکوت|حذف\s*میوت|آن‌?میوت)$/i.test(cleanText || text);
+    if (isUnmuteIntent) {
+      try {
+        await ctx.api.restrictChatMember(ctx.chat!.id, replyUser.id, {
+          can_send_messages: true,
+          can_send_photos: true,
+          can_send_videos: true,
+          can_send_other_messages: true,
+          can_add_web_page_previews: true,
+        });
+        const nameEsc = escapeHtml(replyUser.first_name || "کاربر");
+        await ctx.reply(
+          `🔊 <b>محدودیت چت کاربر <a href="tg://user?id=${replyUser.id}">${nameEsc}</a> برداشته شد و می‌تواند پیام بفرستد.</b>`,
+          { ...replyOpts, parse_mode: "HTML" }
+        );
+      } catch (err: any) {
+        await ctx.reply(`❌ خطا در رفع میوت کاربر: ${err?.description || err?.message || err}`, replyOpts);
+      }
+      return;
+    }
+  }
+
+  // خلاصه پیام‌های اخیر گروه
+  const isSummaryIntent = /^(?:(?:سلام|درود|هی|الو|چطوری)\s+)?(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:خلاصه(?:\s*ی)?\s*(?:پیام‌?ها?|چت|گروه)|پیام‌?ها?ی?\s*گروه\s*رو\s*خلاصه\s*کن|چت\s*رو\s*خلاصه\s*کن|خلاصه\s*بده|خلاصه\s*کن)(?:\s.*)?$/i.test(text.trim());
+  if (isSummaryIntent && isGroup && ctx.chat) {
+    const rows = db.query(`
+      SELECT user_id, text FROM messages 
+      WHERE chat_id = ? AND text != '' 
+      ORDER BY id DESC LIMIT 50
+    `).all(ctx.chat.id) as { user_id: number; text: string }[];
+
+    if (rows.length === 0) {
+      await ctx.reply(
+        `📝 <b>خلاصه‌سازی گفتگوی گروه:</b>\n\n` +
+        `⚠️ هنوز پیامی از سایر اعضا در حافظه ثبت نشده است.\n\n` +
+        `💡 <b>راهنمای فعال‌سازی خواندن پیام‌ها:</b>\n` +
+        `تلگرام به صورت پیش‌فرض دسترسی ربات‌ها به پیام‌های عادی گروه را فیلتر می‌کند. برای اینکه ربات تمام پیام‌های گروه را برای خلاصه‌سازی بخواند:\n` +
+        `۱️⃣ در @BotFather دستور <code>/setprivacy</code> را ارسال کرده، ربات را انتخاب و گزینه <b>Disable</b> را بزنید.\n` +
+        `۲️⃣ اطمینان حاصل کنید ربات دسترسی ادمین برای دیدن پیام‌ها را دارد.`,
+        { ...replyOpts, parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    const historyFormatted = rows.reverse().map((r, i) => `${i + 1}. [کاربر ${r.user_id}]: ${r.text}`).join("\n");
+    const summaryPrompt = `این ۵۰ پیام اخیر ارسالی در گروه است:\n\n${historyFormatted}\n\nلطفاً یک خلاصه جذاب، فوق‌العاده مرتب، دسته‌بندی‌شده و خوانا از موضوعات مطرح‌شده، سوالات و تصمیمات به زبان فارسی ارائه بده.`;
+
+    const statusMsg = await ctx.reply("📋 <i>در حال مطالعه و خلاصه‌سازی پیام‌های اخیر گروه... ⏳</i>", {
+      ...replyOpts,
+      parse_mode: "HTML",
+    });
+
+    const rawSummary = await withTyping(ctx, () => askGemini(userId, summaryPrompt, undefined, ctx));
+    const formattedSummary = markdownToTelegramHtml(rawSummary);
+
+    try {
+      await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, `📑 <b>خلاصه پیام‌های اخیر گروه:</b>\n\n${formattedSummary}`, {
+        parse_mode: "HTML",
+      });
+    } catch {
+      await ctx.reply(`📑 <b>خلاصه پیام‌های اخیر گروه:</b>\n\n${formattedSummary}`, { ...replyOpts, parse_mode: "HTML" });
+    }
     return;
   }
 
@@ -458,7 +608,16 @@ export async function handleTextMessage(ctx: Context) {
     parse_mode: "HTML",
   });
 
-  const promptToSend = cleanText || text;
+  let replyContext = "";
+  if (replyMsg && replyUser) {
+    const sender = `${replyUser.first_name || ""} ${replyUser.last_name || ""}`.trim() || "نامشخص";
+    replyContext += `\n[کانتکست پیام ریپلای‌شده: فرستنده="${sender}" | شناسه عددی (user_id)=${replyUser.id} | متن="${replyMsg.text || replyMsg.caption || "[رسانه/عکس]"}" | شناسه پیام=${replyMsg.message_id}]`;
+  }
+  if (isGroup && ctx.chat) {
+    replyContext += `\n[کانتکست گروه: عنوان="${ctx.chat.title || "گروه"}" | شناسه عددی چت (chat_id)=${ctx.chat.id}]`;
+  }
+
+  const promptToSend = (cleanText || text) + replyContext;
   const rawResponse = await withTyping(ctx, () => askGemini(userId, promptToSend, undefined, ctx));
   const formattedResponse = markdownToTelegramHtml(rawResponse);
   const finalResponse = `${formattedResponse}${formatQuotaFooter(userId)}`;

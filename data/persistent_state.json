@@ -1,0 +1,50 @@
+{
+  "groups": [],
+  "users": [
+    {
+      "user_id": 7142972906,
+      "username": "ahoorazen7x",
+      "first_name": "αħøøяα",
+      "last_name": "",
+      "is_approved": 1,
+      "daily_quota": 24,
+      "can_use_commands": 0
+    },
+    {
+      "user_id": 8062873417,
+      "username": "mmahdiz44",
+      "first_name": "zZ",
+      "last_name": "",
+      "is_approved": 1,
+      "daily_quota": 999999,
+      "can_use_commands": 0
+    },
+    {
+      "user_id": 8288566582,
+      "username": "Mx44xz",
+      "first_name": "mahan",
+      "last_name": "M",
+      "is_approved": 1,
+      "daily_quota": 24,
+      "can_use_commands": 0
+    },
+    {
+      "user_id": 8567112116,
+      "username": "atry2595",
+      "first_name": "Alireza",
+      "last_name": "Amini",
+      "is_approved": 1,
+      "daily_quota": 74,
+      "can_use_commands": 0
+    },
+    {
+      "user_id": 8829420812,
+      "username": "",
+      "first_name": "Z",
+      "last_name": "m",
+      "is_approved": 1,
+      "daily_quota": 24,
+      "can_use_commands": 0
+    }
+  ]
+}

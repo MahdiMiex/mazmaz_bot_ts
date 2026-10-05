@@ -39,44 +39,71 @@ export function markdownToTelegramHtml(markdown: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 
-  // 4. Blockquotes: > quote
-  formatted = formatted.replace(/^&gt;\s+(.+)$/gm, "<blockquote>$1</blockquote>");
+  // 4. Spoilers: ||text|| -> <tg-spoiler>text</tg-spoiler>
+  formatted = formatted.replace(/\|\|([\s\S]+?)\|\|/g, "<tg-spoiler>$1</tg-spoiler>");
 
-  // 5. Headers (# Title, ## Title, ### Title) -> <b>Title</b>
+  // 5. Multi-line Blockquotes (standard & expandable)
+  formatted = formatted.replace(/(?:^&gt;(?:\!|\s*&gt;)?\s*.*(?:\n|$))+/gm, (match) => {
+    const isExpandable = match.includes("&gt;!") || match.includes("&gt;&gt;") || match.includes("&gt; &gt;");
+    const content = match
+      .replace(/^&gt;(?:\!|\s*&gt;)?\s?/gm, "")
+      .trim();
+    if (!content) return "";
+    return isExpandable
+      ? `<blockquote expandable>${content}</blockquote>\n`
+      : `<blockquote>${content}</blockquote>\n`;
+  });
+
+  // 6. Headers (# Title, ## Title, ### Title) -> <b>Title</b>
   formatted = formatted.replace(/^#{1,6}\s+(.+)$/gm, "\n<b>$1</b>\n");
 
-  // 6. Bold: **text** or __text__ -> <b>text</b>
+  // 7. Bold: **text** -> <b>text</b>
   formatted = formatted.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
-  formatted = formatted.replace(/__(.+?)__/g, "<b>$1</b>");
 
-  // 7. Italic: *text* or _text_ -> <i>text</i>
+  // 8. Underline: __text__ -> <u>text</u>
+  formatted = formatted.replace(/__(.+?)__/g, "<u>$1</u>");
+
+  // 9. Italic: *text* or _text_ -> <i>text</i>
   formatted = formatted.replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, "<i>$1</i>");
   formatted = formatted.replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<i>$1</i>");
 
-  // 8. Strikethrough: ~~text~~ -> <s>text</s>
+  // 10. Strikethrough: ~~text~~ -> <s>text</s>
   formatted = formatted.replace(/~~(.+?)~~/g, "<s>$1</s>");
 
-  // 9. Markdown Links: [text](https://...) -> <a href="...">text</a>
+  // 11. Markdown Links: [text](https://...) -> <a href="...">text</a>
   formatted = formatted.replace(/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g, '<a href="$2">$1</a>');
 
-  // 10. Bullet lists: "- item" or "* item" -> "• item"
+  // 12. Bullet lists: "- item" or "* item" -> "• item"
   formatted = formatted.replace(/^[\*\-]\s+(.+)$/gm, "• $1");
 
-  // 11. Clean up any leftover unclosed raw asterisks
+  // 13. Numbered lists: "1. item" -> "<b>1.</b> item"
+  formatted = formatted.replace(/^(\d+)\.\s+(.+)$/gm, "<b>$1.</b> $2");
+
+  // 14. Clean up any leftover unclosed raw asterisks
   formatted = formatted.replace(/\*\*/g, "");
 
-  // 12. Restore inline code
+  // 15. Restore inline code
   formatted = formatted.replace(/§§§IC(\d+)§§§/g, (_, idx) => {
     return inlineCodes[Number(idx)] || "";
   });
 
-  // 13. Restore code blocks
+  // 16. Restore code blocks
   formatted = formatted.replace(/§§§CB(\d+)§§§/g, (_, idx) => {
     return codeBlocks[Number(idx)] || "";
   });
 
   // Clean excessive blank lines
   formatted = formatted.replace(/\n{3,}/g, "\n\n");
+
+  // Auto-balance tags to prevent Telegram parser 400 errors
+  const tagsToBalance = ["b", "i", "s", "u", "code", "pre", "blockquote", "tg-spoiler", "a"];
+  for (const tag of tagsToBalance) {
+    const openCount = (formatted.match(new RegExp(`<${tag}(?:\\s+[^>]*)?>`, "gi")) || []).length;
+    const closeCount = (formatted.match(new RegExp(`</${tag}>`, "gi")) || []).length;
+    if (openCount > closeCount) {
+      formatted += `</${tag}>`.repeat(openCount - closeCount);
+    }
+  }
 
   return formatted.trim();
 }

@@ -127,6 +127,52 @@ try {
   `);
 } catch {}
 
+const SNAPSHOT_PATH = path.resolve(import.meta.dir, "../data/persistent_state.json");
+
+export function saveStateSnapshot() {
+  try {
+    const groups = db.query("SELECT * FROM groups WHERE status = 'approved'").all() as any[];
+    const approvedUsers = db.query("SELECT user_id, username, first_name, last_name, is_approved, daily_quota, can_use_commands FROM users WHERE is_approved = 1").all() as any[];
+    fs.writeFileSync(SNAPSHOT_PATH, JSON.stringify({ groups, users: approvedUsers }, null, 2), "utf-8");
+  } catch (e: any) {
+    console.warn("Failed to write persistent_state.json:", e?.message);
+  }
+}
+
+export function restoreStateSnapshot() {
+  try {
+    if (!fs.existsSync(SNAPSHOT_PATH)) return;
+    const raw = fs.readFileSync(SNAPSHOT_PATH, "utf-8");
+    const data = JSON.parse(raw);
+    if (Array.isArray(data.groups)) {
+      for (const g of data.groups) {
+        db.run(
+          `INSERT OR IGNORE INTO groups (chat_id, title, type, added_by_id, added_by_name, added_by_username, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [g.chat_id, g.title, g.type, g.added_by_id, g.added_by_name, g.added_by_username, g.status]
+        );
+        db.run("INSERT OR REPLACE INTO chats (chat_id, title) VALUES (?, ?)", [g.chat_id, g.title]);
+      }
+    }
+    if (Array.isArray(data.users)) {
+      for (const u of data.users) {
+        db.run(
+          `INSERT OR IGNORE INTO users (user_id, username, first_name, last_name, is_approved, daily_quota, can_use_commands)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [u.user_id, u.username, u.first_name, u.last_name, u.is_approved, u.daily_quota, u.can_use_commands]
+        );
+      }
+    }
+    console.log("✅ Restored persistent state for groups and approved users!");
+  } catch (e: any) {
+    console.warn("Failed to restore state snapshot:", e?.message);
+  }
+}
+
+// Restore state immediately upon startup if available
+restoreStateSnapshot();
+
+
 
 export function registerOrUpdateUser(
   userId: number,
@@ -258,10 +304,12 @@ export function approveUser(userId: number, quota = CONFIG.DEFAULT_DAILY_QUOTA) 
     quota,
     userId,
   ]);
+  saveStateSnapshot();
 }
 
 export function rejectUser(userId: number) {
   db.run(`UPDATE users SET is_approved = 0 WHERE user_id = ?`, [userId]);
+  saveStateSnapshot();
 }
 
 export function getUserById(userId: number) {
@@ -578,8 +626,10 @@ export function registerOrUpdateGroup(
   const effectiveStatus = status !== undefined ? status : (existing ? existing.status : "pending");
   if (effectiveStatus === "approved") {
     db.run("INSERT OR REPLACE INTO chats (chat_id, title) VALUES (?, ?)", [chatId, title || existing?.title || "گروه"]);
+    saveStateSnapshot();
   } else if (effectiveStatus === "left" || effectiveStatus === "rejected") {
     db.run("DELETE FROM chats WHERE chat_id = ?", [chatId]);
+    saveStateSnapshot();
   }
 }
 
@@ -601,6 +651,7 @@ export function setGroupStatus(chatId: number, status: "pending" | "approved" | 
   } else if (status === "left" || status === "rejected") {
     db.run("DELETE FROM chats WHERE chat_id = ?", [chatId]);
   }
+  saveStateSnapshot();
 }
 
 export function isGroupApproved(chatId: number): boolean {

@@ -213,16 +213,26 @@ export async function executeAdminTool(botOrApi: any, ctx: Context | any, name: 
     }
 
     case "summarize_chat": {
-      if (!currentChatId) return { error: "دستور باید داخل گروه اجرا شود یا شناسه گروه مشخص باشد." };
+      let targetChatId = args.chat_id || currentChatId;
+      if (!targetChatId && args.group_title) {
+        const found = db.query("SELECT chat_id FROM groups WHERE title LIKE ? LIMIT 1").get(`%${args.group_title}%`) as any;
+        if (found) targetChatId = found.chat_id;
+      }
+      if (!targetChatId) {
+        const single = db.query("SELECT chat_id, title FROM groups WHERE status = 'approved' LIMIT 1").get() as any;
+        if (single) targetChatId = single.chat_id;
+      }
+      if (!targetChatId) return { error: "دستور باید داخل گروه اجرا شود یا عنوان گروه مشخص باشد." };
+
       const limit = Math.min(args.limit || 50, 100);
-      const rows = db.prepare(`
+      const rows = db.query(`
         SELECT user_id, text FROM messages
         WHERE chat_id = ? AND text != ''
         ORDER BY id DESC LIMIT ?
-      `).all(currentChatId, limit) as { user_id: number; text: string }[];
+      `).all(targetChatId, limit) as { user_id: number; text: string }[];
       
-      const history = rows.reverse().map((r) => `User(${r.user_id}): ${r.text}`).join("\n");
-      return { ok: true, context: history || "پیامی در حافظه یافت نشد." };
+      const history = rows.reverse().map((r, i) => `${i + 1}. [کاربر ${r.user_id}]: ${r.text}`).join("\n");
+      return { ok: true, chat_id: targetChatId, context: history || "پیامی در حافظه این گروه یافت نشد." };
     }
 
     case "delete_recent_messages": {

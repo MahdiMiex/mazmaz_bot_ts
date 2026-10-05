@@ -1,6 +1,17 @@
 import fs from "fs";
 import path from "path";
 
+function getDatabasePath(): string {
+  if (process.env.DB_PATH) return process.env.DB_PATH;
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    return path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "bot.sqlite");
+  }
+  if (fs.existsSync("/data")) {
+    return "/data/bot.sqlite";
+  }
+  return path.resolve(import.meta.dir, "../data/bot.sqlite");
+}
+
 export const CONFIG = {
   BOT_TOKEN: process.env.BOT_TOKEN || "8715729332:AAG3BuKTC8irEHMHpzG37kpSh1_erB43ivA",
   ADMIN_IDS: (process.env.ADMIN_IDS || "8062873417")
@@ -22,7 +33,7 @@ export const CONFIG = {
   BRAVE_API_KEY: process.env.BRAVE_API_KEY || "",
   SEARXNG_URL: process.env.SEARXNG_URL || "",
   DEFAULT_DAILY_QUOTA: parseInt(process.env.DEFAULT_DAILY_QUOTA || "24", 10),
-  DB_PATH: path.resolve(import.meta.dir, "../data/bot.sqlite"),
+  DB_PATH: getDatabasePath(),
   DOWNLOADS_DIR: path.resolve(import.meta.dir, "../downloads"),
 };
 
