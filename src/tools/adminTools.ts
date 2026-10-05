@@ -1,5 +1,5 @@
 import { Bot, Context } from "grammy";
-import { db } from "../db";
+import { db, setSetting } from "../db";
 import { CONFIG } from "../config";
 
 // ۱. اسکیماهای تفکیک‌شده ابزارهای مدیریتی برای هوش مصنوعی
@@ -235,14 +235,44 @@ export async function executeAdminTool(botOrApi: any, ctx: Context | any, name: 
       return { ok: true, chat_id: targetChatId, context: history || "پیامی در حافظه این گروه یافت نشد." };
     }
 
+    case "set_bot_setting": {
+      const { key, value } = args;
+      if (!key) return { ok: false, error: "کلید تنظیم مشخص نشده است." };
+      setSetting(key, value || "");
+      return { ok: true, message: `تنظیم ${key} با موفقیت ذخیره شد.` };
+    }
+
+    case "delete_message":
     case "delete_recent_messages": {
       if (!currentChatId) return { error: "دستور باید داخل گروه اجرا شود." };
-      const count = Math.min(args.count || 10, 100);
-      const rows = db.prepare(`
-        SELECT message_id FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?
-      `).all(currentChatId, count) as { message_id: number }[];
 
-      if (!rows.length) return { ok: false, message: "پیامی برای حذف پیدا نشد." };
+      // ۱. اگر شناسه پیام خاصی داده شده است
+      if (args.message_id) {
+        const mid = Number(args.message_id);
+        try {
+          await api.deleteMessage(currentChatId, mid);
+          db.prepare("DELETE FROM messages WHERE chat_id = ? AND message_id = ?").run(currentChatId, mid);
+          return { ok: true, message: `پیام ${mid} با موفقیت حذف شد.` };
+        } catch (err: any) {
+          return { ok: false, error: `خطا در حذف پیام: ${err?.description || err?.message || err}` };
+        }
+      }
+
+      // ۲. حذف پیام‌های کاربر خاص یا پیام‌های اخیر
+      const targetUserId = args.user_id ? Number(args.user_id) : null;
+      const count = Math.min(args.count || 5, 100);
+      let rows: { message_id: number }[] = [];
+      if (targetUserId) {
+        rows = db.prepare(`
+          SELECT message_id FROM messages WHERE chat_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?
+        `).all(currentChatId, targetUserId, count) as { message_id: number }[];
+      } else {
+        rows = db.prepare(`
+          SELECT message_id FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?
+        `).all(currentChatId, count) as { message_id: number }[];
+      }
+
+      if (!rows.length) return { ok: false, message: "پیامی برای حذف در تاریخچه گروه یافت نشد." };
       
       const messageIds = rows.map((r) => r.message_id);
       try {
@@ -250,7 +280,15 @@ export async function executeAdminTool(botOrApi: any, ctx: Context | any, name: 
         db.prepare(`DELETE FROM messages WHERE chat_id = ? AND message_id IN (${messageIds.join(",")})`).run(currentChatId);
         return { ok: true, deleted_count: messageIds.length };
       } catch (err: any) {
-        return { ok: false, error: err?.message || String(err) };
+        let delCount = 0;
+        for (const mid of messageIds) {
+          try {
+            await api.deleteMessage(currentChatId, mid);
+            delCount++;
+          } catch {}
+        }
+        db.prepare(`DELETE FROM messages WHERE chat_id = ? AND message_id IN (${messageIds.join(",")})`).run(currentChatId);
+        return { ok: true, deleted_count: delCount };
       }
     }
 

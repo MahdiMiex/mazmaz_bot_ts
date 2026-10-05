@@ -145,7 +145,7 @@ export async function handleTextMessage(ctx: Context) {
 
     // دستورات صریح مدیریتی ادمین روی ریپلای (صرفاً افعال دستوری مشخص، نه چت عادی یا ریپلای به بات‌های دیگر)
     const isAdminModAction = isAdmin && Boolean(ctx.message?.reply_to_message) &&
-      /^(?:(?:\/)?(?:ban|mute|unmute)|(?:مزمز|mazmaz)[،,:\s]+)?(?:بن\s*کن|بنش\s*کن|اخراج\s*کن|اخراجش\s*کن|میوت\s*کن|میوتش\s*کن|سکوت|بی‌?صدا|آن‌?میوت\s*کن|آن‌?میوتش\s*کن|رفع\s*سکوت|بن|اخراج|آن‌?میوت)(?:\s+.*)?$/i.test(text.trim());
+      /^(?:(?:\/)?(?:ban|mute|unmute|del|delete)|(?:مزمز|mazmaz)[،,:\s]+)?(?:بن\s*کن|بنش\s*کن|اخراج\s*کن|اخراجش\s*کن|میوت\s*کن|میوتش\s*کن|سکوت|بی‌?صدا|آن‌?میوت\s*کن|آن‌?میوتش\s*کن|رفع\s*سکوت|بن|اخراج|آن‌?میوت|پاک\s*کن|پاکش\s*کن|حذف\s*کن|حذفش\s*کن|این\s*(?:پیام\s*)?رو\s*(?:پاک|حذف)\s*کن)(?:\s+.*)?$/i.test(text.trim());
 
     if (!isReplyToBot && !isBotMentioned && !isDirectCallAtStart && !isCommand && !isAdminModAction) {
       return;
@@ -193,10 +193,18 @@ export async function handleTextMessage(ctx: Context) {
 
   // تنظیمات پویای ربات توسط ادمین در چت تلگرام
   if (isAdmin) {
-    // ۱. تنظیم پسوند سفارشی انتهای پیام‌ها
-    const setFooterMatch = (cleanText || text).match(/^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:آخر\s*پیامت\s*بنویس|پسوند\s*پیام(?:ت)?\s*(?:رو\s*بذار|:)?)\s*[:：]?\s*(.+)$/i);
-    if (setFooterMatch) {
-      const footerVal = setFooterMatch[1].trim();
+    // ۱. تنظیم پسوند سفارشی انتهای پیام‌ها (پشتیبانی از هر دو ساختار گرامری فارسی)
+    let footerVal: string | null = null;
+    const mFooter1 = (cleanText || text).match(/^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:آخر|ته)\s*(?:پیام\S*|پاسخ\S*)\s*(?:رو\s*)?(?:بنویس|بذار)\s*[:：]?\s*(.+)$/i);
+    const mFooter2 = (cleanText || text).match(/^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:آخر|ته)\s*(?:پیام\S*|پاسخ\S*)\s*[:：]?\s*(.+?)\s*(?:رو\s*)?(?:بنویس|بذار)$/i);
+    const mFooter3 = (cleanText || text).match(/^(?:(?:مزمز|mazmaz)[،,:\s]+)?پسوند\s*پیام\S*\s*(?:رو\s*بذار|:)?\s*[:：]?\s*(.+)$/i);
+
+    if (mFooter1) footerVal = mFooter1[1].trim();
+    else if (mFooter2) footerVal = mFooter2[1].trim();
+    else if (mFooter3) footerVal = mFooter3[1].trim();
+
+    if (footerVal) {
+      footerVal = footerVal.replace(/^["'«](.*)["'»]$/g, "$1").trim();
       setSetting("custom_footer", footerVal);
       await ctx.reply(`✅ <b>پسوند پیام‌ها با موفقیت ذخیره شد، رئیس!</b>\n\nاز این پس عبارت زیر انتهای تمام پاسخ‌ها درج می‌شود:\n<blockquote>${escapeHtml(footerVal)}</blockquote>`, {
         ...replyOpts,
@@ -217,11 +225,17 @@ export async function handleTextMessage(ctx: Context) {
     }
 
     // ۳. تنظیم دستورالعمل رفتاری سیستمی هوش مصنوعی
-    const setInstructionMatch = (cleanText || text).match(/^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:دستور\s*(?:رفتاری|سیستمی)|از\s*این\s*به\s*بعد\s*همیشه)\s*[:：]?\s*(.+)$/i);
-    if (setInstructionMatch) {
-      const instructionVal = setInstructionMatch[1].trim();
+    let instructionVal: string | null = null;
+    const mInst1 = (cleanText || text).match(/^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:دستور\s*(?:رفتاری|سیستمی)|تغییر\s*رفتار)\s*[:：]?\s*(.+)$/i);
+    const mInst2 = (cleanText || text).match(/^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:از\s*این\s*به\s*بعد|از\s*الان\s*به\s*بعد)\s*(?:همیشه\s*)?(?:اینطوری\s*باش\s*که\s*|رفتارت\s*اینطوری\s*باشه\s*که\s*)?[:：]?\s*(.+)$/i);
+
+    if (mInst1) instructionVal = mInst1[1].trim();
+    else if (mInst2) instructionVal = mInst2[1].trim();
+
+    if (instructionVal) {
+      instructionVal = instructionVal.replace(/^["'«](.*)["'»]$/g, "$1").trim();
       setSetting("custom_instruction", instructionVal);
-      await ctx.reply(`🧠 <b>دستورالعمل رفتاری جدید ثبت شد!</b>\n\nاین دستور به پرامپت سیستمی جمینای اضافه گردید:\n<blockquote>${escapeHtml(instructionVal)}</blockquote>`, {
+      await ctx.reply(`🧠 <b>دستورالعمل رفتاری جدید ثبت شد!</b>\n\nاین دستور به صورت دائمی به هوش مصنوعی اعمال گردید:\n<blockquote>${escapeHtml(instructionVal)}</blockquote>`, {
         ...replyOpts,
         parse_mode: "HTML",
       });
@@ -229,7 +243,7 @@ export async function handleTextMessage(ctx: Context) {
     }
 
     // ۴. حذف یا ریست دستور رفتاری
-    const clearInstructionIntent = /^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:حذف\s*دستور\s*(?:رفتاری|سیستمی)|ریست\s*دستور\s*(?:رفتاری|سیستمی))$/i.test(cleanText || text);
+    const clearInstructionIntent = /^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:حذف\s*دستور\s*(?:رفتاری|سیستمی)|ریست\s*دستور\s*(?:رفتاری|سیستمی)|ریست\s*رفتار|رفتار\s*عادی|تنظیمات\s*کارخانه)$/i.test(cleanText || text);
     if (clearInstructionIntent) {
       setSetting("custom_instruction", "");
       await ctx.reply("✅ <b>دستورالعمل رفتاری سفارشی ریست شد.</b> مدل به تنظیمات کارخانه بازگشت.", {
@@ -244,7 +258,18 @@ export async function handleTextMessage(ctx: Context) {
   const replyUser = replyMsg?.from;
 
   // دستورات مستقیم و پرسرعت مدیریتی ادمین (مهدی) در گروه روی پیام‌های ریپلای‌شده
-  if (isAdmin && isGroup && replyUser) {
+  if (isAdmin && isGroup && replyMsg) {
+    // ۰. دستور حذف / پاک کردن پیام ریپلای‌شده
+    const isDeleteIntent = /^(?:(?:\/)?(?:del|delete)|(?:مزمز|mazmaz)[،,:\s]+)?(?:پاک\s*کن|پاکش\s*کن|حذف\s*کن|حذفش\s*کن|این\s*(?:پیام\s*)?رو\s*(?:پاک|حذف)\s*کن)$/i.test(cleanText || text);
+    if (isDeleteIntent) {
+      try {
+        await ctx.api.deleteMessage(ctx.chat!.id, replyMsg.message_id);
+        await ctx.deleteMessage().catch(() => {});
+      } catch (err: any) {
+        await ctx.reply(`❌ خطا در حذف پیام: ${err?.description || err?.message || err}`, replyOpts);
+      }
+      return;
+    }
     // ۱. دستور بن / اخراج دائم از گروه
     const isBanIntent = /^(?:(?:مزمز|mazmaz)[،,:\s]+)?(?:\/ban|بن\s*کن|بنش\s*کن|اخراج\s*کن|اخراجش\s*کن|بن|اخراج)$/i.test(cleanText || text);
     if (isBanIntent) {

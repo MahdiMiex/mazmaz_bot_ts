@@ -226,7 +226,9 @@ export async function executeTool(
       case "mute_chat_member":
       case "unmute_chat_member":
       case "summarize_chat":
+      case "delete_message":
       case "delete_recent_messages":
+      case "set_bot_setting":
       case "moderate_user":
       case "manage_bot_chats": {
         return await runToolWithLogger(`ADMIN_${toolName.toUpperCase()}`, JSON.stringify(args), async () => {

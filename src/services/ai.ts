@@ -493,13 +493,26 @@ export async function askGemini(
         },
         {
           name: "delete_recent_messages",
-          description: "حذف گروهی آخرین پیامهای ارسالی در گروه",
+          description: "حذف پیام‌ها در گروه بر اساس تعداد، شناسه پیام message_id یا شناسه کاربر user_id",
           parameters: {
             type: Type.OBJECT,
             properties: {
-              count: { type: Type.NUMBER, description: "تعداد پیامها برای پاکسازی" },
+              count: { type: Type.NUMBER, description: "تعداد پیامها برای پاکسازی (اختیاری)" },
+              message_id: { type: Type.NUMBER, description: "شناسه پیام مشخص جهت حذف (اختیاری)" },
+              user_id: { type: Type.NUMBER, description: "شناسه کاربر برای حذف پیام‌های ارسالی‌اش (اختیاری)" },
             },
-            required: ["count"],
+          },
+        },
+        {
+          name: "set_bot_setting",
+          description: "تنظیم یا تغییر پسوند پیام‌ها (custom_footer) یا دستورالعمل رفتاری بات (custom_instruction)",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              key: { type: Type.STRING, description: "کلید تنظیم: custom_footer یا custom_instruction" },
+              value: { type: Type.STRING, description: "مقدار متنی جهت تنظیم یا رشته خالی جهت حذف" },
+            },
+            required: ["key", "value"],
           },
         },
         {
