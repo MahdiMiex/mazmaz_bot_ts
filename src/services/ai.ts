@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { HttpsProxyAgent } from "https-proxy-agent";
-import { getChatHistory, saveChatMessage, clearChatHistory, getSetting } from "../database";
+import { getChatHistory, saveChatMessage, clearChatHistory, getSetting, getApprovedRules } from "../database";
 import { CONFIG } from "../config";
 import { getActiveGeminiKey, markKeyCooldown } from "./resilience";
 import { getWeather, extractWeatherIntent } from "./weather";
@@ -198,7 +198,9 @@ export async function askGemini(
       httpOptions: agent ? { agent } : undefined,
     });
 
+    const preferredModel = getSetting("ai_model");
     const rawCandidates = [
+      preferredModel,
       CONFIG.AI_MODEL,
       "gemini-2.0-flash",
       "gemini-2.0-flash-lite",
@@ -295,12 +297,18 @@ export async function askGemini(
 ۲. **ممنوعیت کامل توهم عدم دسترسی (Hallucination Rule):** هرگز و تحت هیچ شرایطی ادعا نکن که ربات‌های تلگرام محدودیت دارند یا برای فرستادن آهنگ نیاز به اکانت شخصی یا یوزربات (Userbot) است! چنین ادعایی کاملاً باطل و مردود است.
 ۳. **فراخوانی بلافاصله ابزار (Instant Action):** به محض اینکه کاربر نام آهنگ، نام خواننده یا لینک صوتی (از یوتیوب، ساندکلاد، اسپاتیفای یا لینک مستقیم) فرستاد یا درخواست آهنگ کرد، **بلافاصله و بدون هیچ بهانه‌تراشی یا توضیح محدودیت‌های فنی**، ابزار download_music را صدا بزن تا فایل مستقیماً در چت تلگرام ارسال شود.
 
+### قوانین حافظه زنده و خلاصه چت (Dynamic Memory & Chat Digest Rules):
+۱. **ثبت دستورالعمل رفتاری (Human-in-the-Loop):** هر زمان درخواست تغییر رفتار، ثبت قانون جدید یا دستورالعمل رفتاری شد، **هرگز ادعا نکن ذخیره شد یا اعمال شد**. بلافاصله ابزار propose_memory_rule(key, value) را فراخوانی کن تا پیام دکمه‌دار تایید/لغو برای ادمین ارسال شود.
+۲. **خلاصه‌سازی و دایجست چت (Chat History Digest):** هر زمان کاربر درخواست خلاصه، مرور، جمع‌بندی یا گزارش گفتگو و چت‌های اخیر را داد، **هرگز تاریخچه خام پیام‌ها را چاپ نکن**. بلافاصله ابزار generate_chat_digest(limit, focus) را صدا بزن.
+
 ### قوانین استفاده از ابزارهای اجرایی (Function Calling):
 ۱. برای داده‌های زنده (نرخ ارز، طلا، رمزارز، هواشناسی، اخبار) حتماً ابزار مربوطه را صدا بزن و هرگز حدس نزن.
 ۲. برای جستجو، استخراج لینک، یا اطلاعات محصول دیجیکالا از ابزار وب (web_search / fetch_url / fetch_page) استفاده کن.
 ۳. در صورت نیاز به محاسبات ریاضی پیچیده از eval_math استفاده کن.
 ۴. برای هرگونه موزیک یا آهنگ از download_music استفاده کن.
-۵. پاسخ‌ها را خلاصه، دقیق و بدون متون اضافه با فرمت تمیز ارائه بده.`;
+۵. برای ثبت قوانین رفتاری جدید از propose_memory_rule استفاده کن.
+۶. برای خلاصه کردن پیام‌های چت از generate_chat_digest استفاده کن.
+۷. پاسخ‌ها را خلاصه، دقیق و بدون متون اضافه با فرمت تمیز ارائه بده.`;
 
     const userSystemInstruction = `شما «مزمز» یا mazmaz هستید؛ یک ربات تلگرام فوق‌العاده هوشمند، فنی، کارکشته و توسعه‌یافته با تکیه بر استک مدرن (TypeScript, grammY, Bun, SQLite و Google Gemini). سازنده و ادمین اصلی شما «مهدی» است.
 
@@ -354,20 +362,36 @@ export async function askGemini(
 ۲. **ممنوعیت کامل توهم عدم دسترسی (Hallucination Rule):** هرگز و تحت هیچ شرایطی ادعا نکن که ربات‌های تلگرام محدودیت دارند یا برای فرستادن آهنگ نیاز به اکانت شخصی یا یوزربات (Userbot) است! چنین ادعایی کاملاً باطل و مردود است.
 ۳. **فراخوانی بلافاصله ابزار (Instant Action):** به محض اینکه کاربر نام آهنگ، نام خواننده یا لینک صوتی (از یوتیوب، ساندکلاد، اسپاتیفای یا لینک مستقیم) فرستاد یا درخواست آهنگ کرد، **بلافاصله و بدون هیچ بهانه‌تراشی یا توضیح محدودیت‌های فنی**، ابزار download_music را صدا بزن تا فایل مستقیماً در چت تلگرام ارسال شود.
 
+### قوانین حافظه زنده و خلاصه چت (Dynamic Memory & Chat Digest Rules):
+۱. **ثبت دستورالعمل رفتاری (Human-in-the-Loop):** هر زمان درخواست تغییر رفتار، ثبت قانون جدید یا دستورالعمل رفتاری شد، **هرگز ادعا نکن ذخیره شد یا اعمال شد**. بلافاصله ابزار propose_memory_rule(key, value) را فراخوانی کن تا پیام دکمه‌دار تایید/لغو برای ادمین ارسال شود.
+۲. **خلاصه‌سازی و دایجست چت (Chat History Digest):** هر زمان کاربر درخواست خلاصه، مرور، جمع‌بندی یا گزارش گفتگو و چت‌های اخیر را داد، **هرگز تاریخچه خام پیام‌ها را چاپ نکن**. بلافاصله ابزار generate_chat_digest(limit, focus) را صدا بزن.
+
 ### قوانین استفاده از ابزارهای اجرایی (Function Calling):
 ۱. برای داده‌های زنده و آب‌وهوا از ابزارهای مربوطه (\`get_weather\` و ...) استفاده کن و هرگز حدس نزن.
 ۲. برای جستجو و استخراج لینک‌های وب از ابزارهای وب (\`web_search\` / \`fetch_url\` / \`fetch_page\` / \`fetch_web_page\`) استفاده کن.
 ۳. در صورت نیاز به محاسبات ریاضی دقیق از \`eval_math\` استفاده کن.
 ۴. برای اسکرین‌شات صفحات وب از \`take_web_screenshot\` استفاده کن.
 ۵. برای هرگونه آهنگ، موزیک یا فایل صوتی از \`download_music\` استفاده کن.
-۶. پاسخ‌ها را خلاصه، دقیق و بدون متون اضافه با فرمت تمیز ارائه بده.`;
+۶. برای ثبت قوانین رفتاری جدید از propose_memory_rule استفاده کن.
+۷. برای خلاصه کردن پیام‌های چت از generate_chat_digest استفاده کن.
+۸. پاسخ‌ها را خلاصه، دقیق و بدون متون اضافه با فرمت تمیز ارائه بده.`;
 
 
     const customInstruction = getSetting("custom_instruction");
+    const approvedRules = getApprovedRules();
+    const dynamicRulesText = approvedRules.length > 0
+      ? `\n\n### قوانین حافظه پویا (Dynamic Memory Rules - تایید شده توسط ادمین):\n` +
+        approvedRules.map((r, i) => `${i + 1}. [${r.key}]: ${r.value}`).join("\n")
+      : "";
+
     const baseInstruction = isAdmin ? adminSystemInstruction : userSystemInstruction;
-    const systemInstruction = customInstruction
+    let systemInstruction = customInstruction
       ? `${baseInstruction}\n\n### دستورالعمل تکمیلی و رفتاری ادمین:\n${customInstruction}`
       : baseInstruction;
+
+    if (dynamicRulesText) {
+      systemInstruction += dynamicRulesText;
+    }
 
     const functionDeclarations: any[] = [
       ...(webToolsDeclaration as any[]),
@@ -457,6 +481,29 @@ export async function askGemini(
             },
           },
           required: ["query"],
+        },
+      },
+      {
+        name: "propose_memory_rule",
+        description: "پیشنهاد و ثبت قانون یا تغییر رفتار جدید در حافظه هوش مصنوعی جهت تایید ادمین. هرگز قبل از تایید ادعای ذخیره شدن نکنید.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            key: { type: Type.STRING, description: "شناسه یا عنوان کوتاه قانون (مثلاً tone_humor یا response_style)" },
+            value: { type: Type.STRING, description: "متن کامل دستورالعمل یا قانون رفتاری" },
+          },
+          required: ["key", "value"],
+        },
+      },
+      {
+        name: "generate_chat_digest",
+        description: "تولید دایجست و خلاصه‌سازی ساختاریافته پیام‌های اخیر گفتگو (نکات کلیدی، تصمیمات، مشارکت‌کنندگان) با حذف نویز و پیام‌های بیارزش.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            limit: { type: Type.NUMBER, description: "تعداد پیام‌های اخیر جهت بررسی (پیش‌فرض ۱۰۰)" },
+            focus: { type: Type.STRING, description: "موضوع یا شخص خاص برای تمرکز خلاصه (اختیاری)" },
+          },
         },
       },
     ];
@@ -580,6 +627,9 @@ export async function askGemini(
     let response: any = null;
     let lastErr: any = null;
 
+    const tempSetting = parseFloat(getSetting("ai_temperature", "0.7"));
+    const activeTemperature = !isNaN(tempSetting) ? tempSetting : 0.7;
+
     for (const m of modelCandidates) {
       const workingContents = JSON.parse(JSON.stringify(contents));
       try {
@@ -588,7 +638,7 @@ export async function askGemini(
           contents: workingContents,
           config: {
             systemInstruction,
-            temperature: 0.6,
+            temperature: activeTemperature,
             tools,
           },
         });

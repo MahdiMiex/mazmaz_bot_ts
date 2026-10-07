@@ -123,6 +123,14 @@ db.run(`
     key TEXT PRIMARY KEY,
     value TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT UNIQUE,
+    value TEXT,
+    approved INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 try {
@@ -686,6 +694,62 @@ export function setGroupStatus(chatId: number, status: "pending" | "approved" | 
 export function isGroupApproved(chatId: number): boolean {
   const group = db.query("SELECT status FROM groups WHERE chat_id = ?").get(chatId) as any;
   return group?.status === "approved";
+}
+
+export function proposeRule(key: string, value: string): number {
+  const existing = db.query("SELECT id FROM rules WHERE key = ?").get(key) as any;
+  if (existing) {
+    db.run("UPDATE rules SET value = ?, approved = 0, created_at = CURRENT_TIMESTAMP WHERE id = ?", [value, existing.id]);
+    return Number(existing.id);
+  }
+  const res = db.run("INSERT INTO rules (key, value, approved) VALUES (?, ?, 0)", [key, value]);
+  return Number(res.lastInsertRowid);
+}
+
+export function approveRule(id: number): boolean {
+  try {
+    db.run("UPDATE rules SET approved = 1 WHERE id = ?", [id]);
+    return true;
+  } catch (e) {
+    console.error("Error approving rule:", e);
+    return false;
+  }
+}
+
+export function rejectRule(id: number): boolean {
+  try {
+    db.run("DELETE FROM rules WHERE id = ?", [id]);
+    return true;
+  } catch (e) {
+    console.error("Error rejecting rule:", e);
+    return false;
+  }
+}
+
+export function getApprovedRules(): { id: number; key: string; value: string }[] {
+  try {
+    return db.query("SELECT id, key, value FROM rules WHERE approved = 1 ORDER BY id ASC").all() as any[];
+  } catch (e) {
+    console.error("Error getting approved rules:", e);
+    return [];
+  }
+}
+
+export function getRuleById(id: number): { id: number; key: string; value: string; approved: number } | null {
+  try {
+    return (db.query("SELECT id, key, value, approved FROM rules WHERE id = ?").get(id) as any) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearChatContext(chatId: number): void {
+  try {
+    db.run("DELETE FROM chat_history WHERE user_id = ?", [chatId]);
+    db.run("DELETE FROM messages WHERE chat_id = ?", [chatId]);
+  } catch (e) {
+    console.error("Error clearing chat context:", e);
+  }
 }
 
 

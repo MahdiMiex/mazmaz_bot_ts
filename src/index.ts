@@ -39,12 +39,20 @@ import {
   getAllGroups,
   setGroupStatus,
   isGroupApproved,
+  clearChatContext,
+  getApprovedRules,
+  approveRule,
+  rejectRule,
+  getRuleById,
+  getSetting,
+  setSetting,
 } from "./db";
 import { ADMIN_REPLY_TARGET } from "./services/feedback";
 import { sendSafeMessage, withTyping } from "./utils/chunker";
 import { escapeHtml } from "./utils/formatter";
 import { downloadMedia, cleanupFile } from "./services/mediaDownloader";
 import { sendMusicToTelegram } from "./services/musicService";
+import { generateChatDigest } from "./services/digestService";
 import { getWeather } from "./services/weather";
 import { getCryptoPrices } from "./services/crypto";
 import { getDollarAndGoldReport } from "./services/currency";
@@ -243,6 +251,173 @@ bot.command(["music", "song", "ahang", "music@mazmazAgentBot"], async (ctx) => {
     );
   }
   await sendMusicToTelegram(ctx, query);
+});
+
+// 1.1 دستور پاکسازی حافظه چت (/clear)
+bot.command(["clear", "clear@mazmazAgentBot", "reset"], async (ctx) => {
+  const chatId = ctx.chat.id;
+  const userId = ctx.from?.id;
+
+  clearChatContext(chatId);
+  if (userId) {
+    clearUserHistory(userId);
+  }
+
+  await ctx.reply(
+    "🧹 <b>حافظه و زمینه گفتگو برای این چت با موفقیت پاکسازی شد!</b>\n\n" +
+      "از این لحظه، هوش مصنوعی بدون پیش‌زمینه و سابقه قبلی پاسخ خواهد داد. 🚀",
+    { parse_mode: "HTML" }
+  );
+});
+
+// 1.2 دستور مشاهده لاگ تاریخچه گفتگو (/history)
+bot.command(["history", "history@mazmazAgentBot"], async (ctx) => {
+  const chatId = ctx.chat.id;
+  const isGroup = chatId < 0;
+
+  const kb = new InlineKeyboard()
+    .text("📊 تولید دایجست و خلاصه گفتگو", `act_digest:${chatId}`)
+    .row()
+    .text("🧹 پاکسازی زمینه گفتگو (/clear)", "act_clear");
+
+  if (isGroup) {
+    const countRow = db.query("SELECT COUNT(*) as cnt FROM messages WHERE chat_id = ?").get(chatId) as any;
+    const count = countRow?.cnt || 0;
+    return ctx.reply(
+      `📜 <b>تاریخچه پیام‌های ثبت‌شده گروه:</b>\n\n` +
+        `• تعداد پیام‌های اخیر: <b>${count}</b> پیام\n\n` +
+        `💡 جهت دریافت خلاصه تمیز و تحلیل تصمیمات چت، روی دکمه دایجست کلیک کنید:`,
+      { reply_markup: kb, parse_mode: "HTML" }
+    );
+  } else {
+    const userId = ctx.from!.id;
+    const history = db
+      .query("SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT 6")
+      .all(userId) as any[];
+
+    if (history.length === 0) {
+      return ctx.reply("📜 تاریخچه گفتگوی شما در حال حاضر خالی است.", { reply_markup: kb });
+    }
+
+    const lines = history
+      .reverse()
+      .map(
+        (h) =>
+          `• <b>${h.role === "user" ? "شما" : "مزمز"}:</b> ${escapeHtml(h.content.slice(0, 120))}${
+            h.content.length > 120 ? "..." : ""
+          }`
+      );
+
+    return ctx.reply(`📜 <b>آخرین پیام‌های تبادل‌شده در گفتگو:</b>\n\n${lines.join("\n\n")}`, {
+      reply_markup: kb,
+      parse_mode: "HTML",
+    });
+  }
+});
+
+// 1.3 دستور مشاهده و تغییر مدل هوش مصنوعی (/model)
+bot.command(["model", "model@mazmazAgentBot"], async (ctx) => {
+  const currentModel = getSetting("ai_model", CONFIG.AI_MODEL);
+  const kb = new InlineKeyboard()
+    .text("⚡ gemini-2.0-flash (پیش‌فرض سریع و دقیق)", "set_model:gemini-2.0-flash")
+    .row()
+    .text("🪶 gemini-2.0-flash-lite (فوق‌سبک و کم‌مصرف)", "set_model:gemini-2.0-flash-lite");
+
+  await ctx.reply(
+    `🧠 <b>تنظیمات مدل هوش مصنوعی:</b>\n\n` +
+      `• مدل فعال: <code>${currentModel}</code>\n\n` +
+      `جهت جابجایی بین مدل‌های رسمی و بدون خطای گوگل انتخاب کنید:`,
+    { reply_markup: kb, parse_mode: "HTML" }
+  );
+});
+
+// 1.4 دستور تنظیم میزان خلاقیت پاسخ‌ها (/temp)
+bot.command(["temp", "temp@mazmazAgentBot", "temperature"], async (ctx) => {
+  const currentTemp = getSetting("ai_temperature", "0.7");
+  const kb = new InlineKeyboard()
+    .text("🎯 دقیق و فنی (0.2)", "set_temp:0.2")
+    .row()
+    .text("⚖️ متعادل و استاندارد (0.7)", "set_temp:0.7")
+    .row()
+    .text("🎭 خلاقانه و منعطف (1.0)", "set_temp:1.0");
+
+  await ctx.reply(
+    `🌡️ <b>تنظیم دمای خلاقیت (Creativity Temperature):</b>\n\n` +
+      `• مقدار فعلی: <code>${currentTemp}</code>\n\n` +
+      `مقادیر پایین برای کدنویسی و پاسخ‌های قطعی، و مقادیر بالا برای ایده‌پردازی و طنز مناسب هستند:`,
+    { reply_markup: kb, parse_mode: "HTML" }
+  );
+});
+
+// 1.5 دستور تغییر زبان ربات (/lang)
+bot.command(["lang", "lang@mazmazAgentBot", "language"], async (ctx) => {
+  const currentLang = getSetting("bot_language", "fa");
+  const kb = new InlineKeyboard()
+    .text("🇮🇷 فارسی (پیش‌فرض)", "set_lang:fa")
+    .text("🇬🇧 English", "set_lang:en");
+
+  await ctx.reply(
+    `🌐 <b>انتخاب زبان کاری ربات (Language):</b>\n\n` +
+      `• زبان فعلی: <b>${currentLang === "fa" ? "فارسی 🇮🇷" : "English 🇬🇧"}</b>`,
+    { reply_markup: kb, parse_mode: "HTML" }
+  );
+});
+
+// 1.6 دستور مشاهده و تنظیم پرامپت سیستمی و قوانین پویا (/system)
+bot.command(["system", "system@mazmazAgentBot", "prompt"], async (ctx) => {
+  const customPrompt = getSetting("custom_instruction", "");
+  const approvedRules = getApprovedRules();
+
+  let text = `⚙️ <b>دستورالعمل سیستمی و قوانین حافظه زنده:</b>\n\n`;
+  text += `📝 <b>دستورالعمل اختصاصی ادمین:</b>\n${
+    customPrompt ? `<code>${escapeHtml(customPrompt)}</code>` : "<i>تنظیم نشده (پیش‌فرض سیستم)</i>"
+  }\n\n`;
+
+  text += `📋 <b>قوانین تاییدشده حافظه پویا (${approvedRules.length} قانون فعال):</b>\n`;
+  if (approvedRules.length === 0) {
+    text += "<i>هنوز قانون پویایی تایید نشده است.</i>\n";
+  } else {
+    for (const r of approvedRules) {
+      text += `• <b>${escapeHtml(r.key)}:</b> <code>${escapeHtml(r.value.slice(0, 100))}</code>\n`;
+    }
+  }
+
+  const kb = new InlineKeyboard();
+  if (customPrompt) {
+    kb.text("🗑️ بازنشانی پرامپت ادمین", "reset_sysprompt");
+  }
+
+  await ctx.reply(text, {
+    reply_markup: kb.inline_keyboard.length > 0 ? kb : undefined,
+    parse_mode: "HTML",
+  });
+});
+
+// 1.7 منوی تعاملی تنظیمات (/settings)
+bot.command(["settings", "settings@mazmazAgentBot"], async (ctx) => {
+  const model = getSetting("ai_model", CONFIG.AI_MODEL);
+  const temp = getSetting("ai_temperature", "0.7");
+  const lang = getSetting("bot_language", "fa");
+  const rulesCount = getApprovedRules().length;
+
+  const kb = new InlineKeyboard()
+    .text("🧠 تغییر مدل", "cmd_menu_model")
+    .text("🌡️ دمای خلاقیت", "cmd_menu_temp")
+    .row()
+    .text("🌐 انتخاب زبان", "cmd_menu_lang")
+    .text("📋 قوانین حافظه", "cmd_menu_system")
+    .row()
+    .text("🧹 پاکسازی کانتکست چت", "act_clear");
+
+  await ctx.reply(
+    `🛠️ <b>داشبورد تنظیمات تعاملی ربات مزمز:</b>\n\n` +
+      `• <b>مدل هوش مصنوعی:</b> <code>${model}</code>\n` +
+      `• <b>دمای خلاقیت:</b> <code>${temp}</code>\n` +
+      `• <b>زبان پاسخگویی:</b> <code>${lang === "fa" ? "فارسی 🇮🇷" : "English 🇬🇧"}</code>\n` +
+      `• <b>قوانین حافظه زنده:</b> <code>${rulesCount} قانون فعال</code>\n\n` +
+      `جهت ویرایش هر بخش، روی دکمه مربوطه کلیک کنید:`,
+    { reply_markup: kb, parse_mode: "HTML" }
+  );
 });
 
 bot.command(["setkey", "setkey@mazmazAgentBot"], async (ctx) => {
@@ -817,6 +992,129 @@ bot.callbackQuery("ignore_alert", async (ctx) => {
     parse_mode: "HTML",
   }).catch(() => {});
   await ctx.answerCallbackQuery({ text: "گزارش نادیده گرفته شد." }).catch(() => {});
+});
+
+// هندلرهای قوانین حافظه پویا (Human-in-the-Loop)
+bot.callbackQuery(/^approve_rule:(\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
+    return ctx.answerCallbackQuery({ text: "فقط ادمین ربات مجاز به تایید قوانین است.", show_alert: true });
+  }
+  const ruleId = parseInt(ctx.match[1], 10);
+  const rule = getRuleById(ruleId);
+  approveRule(ruleId);
+
+  await ctx.editMessageText(
+    `✅ <b>قانون رفتاری با موفقیت تایید و فعال شد!</b>\n\n` +
+      `🔑 <b>شناسه:</b> <code>${rule?.key || ruleId}</code>\n` +
+      `📝 <b>دستورالعمل:</b>\n${rule?.value || ""}\n\n` +
+      `<i>از این پس این دستورالعمل به تمام پرامپت‌های بعدی هوش مصنوعی تزریق خواهد شد.</i>`,
+    { parse_mode: "HTML" }
+  ).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "قانون تایید و به حافظه هوش مصنوعی اضافه شد! ✅" });
+});
+
+bot.callbackQuery(/^reject_rule:(\d+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
+    return ctx.answerCallbackQuery({ text: "فقط ادمین ربات مجاز به لغو قوانین است.", show_alert: true });
+  }
+  const ruleId = parseInt(ctx.match[1], 10);
+  const rule = getRuleById(ruleId);
+  rejectRule(ruleId);
+
+  await ctx.editMessageText(
+    `❌ <b>پیشنهاد قانون «${rule?.key || ruleId}» رد و از پایگاه داده حذف گردید.</b>`,
+    { parse_mode: "HTML" }
+  ).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "پیشنهاد قانون لغو شد. ❌" });
+});
+
+// دایجست چت و خلاصه سریع
+bot.callbackQuery(/^act_digest:(-?\d+)$/, async (ctx) => {
+  const chatId = parseInt(ctx.match[1], 10);
+  await ctx.answerCallbackQuery({ text: "در حال تولید دایجست و خلاصه گفتگو... ⏳" });
+  await ctx.reply("📊 <i>در حال استخراج پیام‌های کلیدی و تولید دایجست با هوش مصنوعی... ⏳</i>", { parse_mode: "HTML" });
+  const digest = await generateChatDigest(chatId, 100);
+  await ctx.reply(`📊 <b>دایجست پیام‌های اخیر گفتگو:</b>\n\n${digest}`, { parse_mode: "HTML" });
+});
+
+// اکشن پاکسازی سریع (/clear)
+bot.callbackQuery("act_clear", async (ctx) => {
+  const chatId = ctx.chat?.id || ctx.from!.id;
+  clearChatContext(chatId);
+  clearUserHistory(ctx.from!.id);
+  await ctx.answerCallbackQuery({ text: "حافظه چت پاکسازی شد! 🧹" });
+  await ctx.reply("🧹 <b>حافظه و زمینه گفتگو برای این چت با موفقیت ریست شد!</b>", { parse_mode: "HTML" });
+});
+
+// دکمه‌های منوی تنظیمات
+bot.callbackQuery(/^set_model:(.+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
+    return ctx.answerCallbackQuery({ text: "تنظیم مدل فقط توسط ادمین امکان‌پذیر است.", show_alert: true });
+  }
+  const newModel = ctx.match[1];
+  setSetting("ai_model", newModel);
+  await ctx.editMessageText(`✅ <b>مدل فعال هوش مصنوعی به <code>${newModel}</code> تغییر یافت.</b>`, { parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: `مدل به ${newModel} تغییر یافت.` });
+});
+
+bot.callbackQuery(/^set_temp:([0-9.]+)$/, async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
+    return ctx.answerCallbackQuery({ text: "تنظیم دما فقط توسط ادمین امکان‌پذیر است.", show_alert: true });
+  }
+  const newTemp = ctx.match[1];
+  setSetting("ai_temperature", newTemp);
+  await ctx.editMessageText(`✅ <b>دمای خلاقیت با موفقیت روی <code>${newTemp}</code> تنظیم شد.</b>`, { parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: `دما به ${newTemp} تنظیم شد.` });
+});
+
+bot.callbackQuery(/^set_lang:(fa|en)$/, async (ctx) => {
+  const newLang = ctx.match[1];
+  setSetting("bot_language", newLang);
+  await ctx.editMessageText(`✅ <b>زبان کاری به ${newLang === "fa" ? "فارسی 🇮🇷" : "English 🇬🇧"} تغییر یافت.</b>`, { parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "زبان تغییر یافت." });
+});
+
+bot.callbackQuery("reset_sysprompt", async (ctx) => {
+  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) return;
+  setSetting("custom_instruction", "");
+  await ctx.editMessageText("🗑️ <b>دستورالعمل اختصاصی ادمین ریست شد و به حالت پیش‌فرض بازگشت.</b>", { parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "پرامپت ریست شد." });
+});
+
+bot.callbackQuery("cmd_menu_model", async (ctx) => {
+  const kb = new InlineKeyboard()
+    .text("⚡ gemini-2.0-flash", "set_model:gemini-2.0-flash")
+    .row()
+    .text("🪶 gemini-2.0-flash-lite", "set_model:gemini-2.0-flash-lite");
+  await ctx.editMessageText("🧠 <b>یکی از مدل‌های زیر را انتخاب کنید:</b>", { reply_markup: kb, parse_mode: "HTML" });
+});
+
+bot.callbackQuery("cmd_menu_temp", async (ctx) => {
+  const kb = new InlineKeyboard()
+    .text("🎯 دقیق (0.2)", "set_temp:0.2")
+    .text("⚖️ متعادل (0.7)", "set_temp:0.7")
+    .text("🎭 خلاق (1.0)", "set_temp:1.0");
+  await ctx.editMessageText("🌡️ <b>میزان دمای خلاقیت را تعیین کنید:</b>", { reply_markup: kb, parse_mode: "HTML" });
+});
+
+bot.callbackQuery("cmd_menu_lang", async (ctx) => {
+  const kb = new InlineKeyboard()
+    .text("🇮🇷 فارسی", "set_lang:fa")
+    .text("🇬🇧 English", "set_lang:en");
+  await ctx.editMessageText("🌐 <b>زبان مورد نظر خود را انتخاب کنید:</b>", { reply_markup: kb, parse_mode: "HTML" });
+});
+
+bot.callbackQuery("cmd_menu_system", async (ctx) => {
+  const approvedRules = getApprovedRules();
+  let text = `📋 <b>قوانین حافظه زنده (${approvedRules.length} قانون):</b>\n\n`;
+  if (approvedRules.length === 0) {
+    text += "<i>هیچ قانونی ثبت نشده است. با گفتگوی زبانی می‌توانید از مزمز بخواهید قانونی پیشنهاد دهد.</i>";
+  } else {
+    for (const r of approvedRules) {
+      text += `• <b>${escapeHtml(r.key)}:</b> <code>${escapeHtml(r.value.slice(0, 80))}</code>\n`;
+    }
+  }
+  await ctx.editMessageText(text, { parse_mode: "HTML" });
 });
 
 bot.callbackQuery(/^mute_u:(\d+):(\d+)$/, async (ctx) => {
@@ -1502,22 +1800,29 @@ async function launchBotWithResilience() {
               // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه تاریخ، ساعت، کارهای جدید و رفع باگ‌ها
               await bot.api.sendMessage(
                 adminId,
-                `🚀 <b>آپدیت جدید مزمز با قابلیت اختصاصی دانلود موزیک و اصلاح مدل‌های جمینای فعال شد!</b>\n\n` +
+                `🚀 <b>آپدیت جدید مزمز با دستورات اسلش، حافظه زنده و ابزار دایجست فعال شد!</b>\n\n` +
                 `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
-                `🛠️ <b>اقدامات جدید و باگ‌های رفع‌شده در این نسخه:</b>\n` +
-                `• 🎵 <b>جستجو، دانلود و ارسال مستقیم آهنگ و فایل صوتی (<code>download_music</code> و <code>/music</code>):</b> پشتیبانی کامل از استخراج و ارسال صوت تا سقف ۵۰ مگابایت با متد رسمی <code>sendAudio</code> در تلگرام، استخراج خودکار متادیتا (نام اثر و خواننده)، کیفیت ۱۹۲ کیلوبیت و پاکسازی آنی فایل‌های موقت.\n` +
-                `• 🧠 <b>رفع کامل توهم عدم دسترسی هوش مصنوعی:</b> تزریق قوانین صریح در پرامپت سیستمی جهت جلوگیری از ادعای نیاز به یوزربات یا محدودیت تلگرام و فراخوانی بلادرنگ ابزار موزیک در گفتگو.\n` +
-                `• ⚡ <b>رفع ارور ۴۰۴ مدل جمینای:</b> حذف شناسه نامعتبر <code>gemini-2.5-flash-lite</code> و جایگزینی با شناسه‌های رسمی و پایدار <code>gemini-2.0-flash</code> و <code>gemini-2.0-flash-lite</code> در لیست کاندیداها و فال‌بک‌ها.\n` +
-                `• 🐳 <b>تجهیز محیط داکر به ffmpeg و yt-dlp:</b> ارتقای Dockerfile برای پشتیبانی بی‌نقص از استخراج صوت روی بستر دپلوی سرور (Railway).\n\n` +
+                `🛠️ <b>اقدامات جدید در این نسخه:</b>\n` +
+                `• ⚡ <b>منوی دستورات تلگرام (setMyCommands):</b> ثبت ۷ دستور اسلش استاندارد در تلگرام (/clear, /history, /model, /temp, /lang, /system, /settings) و فعال‌سازی قابلیت پاکسازی حافظه چت (/clear).\n` +
+                `• 🧠 <b>حافظه زنده و تایید انسانی (Human-in-the-Loop):</b> جلوگیری از توهم بات هنگام تعریف دستورالعمل جدید؛ ایجاد سیستم ثبت قانون با دکمه شیشه‌ای تایید/لغو ادمین (ابزار <code>propose_memory_rule</code>) و تزریق خودکار قوانین تاییدشده به پرامپت بعدی.\n` +
+                `• 📊 <b>ابزار دایجست چت (<code>generate_chat_digest</code>):</b> حذف پیام‌های اسپم و بی‌ارزش تاریخچه و ارسال خلاصه ساختاریافته به مدل جهت کاهش مصرف توکن و حفظ زمینه مکالمه.\n\n` +
                 `<i>مزمز دقیق، منظم و گوش‌به‌فرمان در خدمت شماست، رئیس!</i>`,
                 { parse_mode: "HTML" }
               ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));
             }
 
-            // مخفی کردن منوی دستورات در تمام گروه‌ها و برای سایر کاربران عادی
+            // ثبت منوی ۷ دستور اسلش استاندارد در تلگرام برای کاربران و پاکسازی در گروه‌ها
+            await bot.api.setMyCommands([
+              { command: "clear", description: "پاکسازی حافظه و زمینه گفتگو" },
+              { command: "history", description: "مشاهده لاگ پیام‌های اخیر گفتگو" },
+              { command: "model", description: "مشاهده یا تغییر مدل هوش مصنوعی" },
+              { command: "temp", description: "تنظیم میزان خلاقیت پاسخ‌ها (Temperature)" },
+              { command: "lang", description: "تغییر زبان ربات (فارسی / English)" },
+              { command: "system", description: "مشاهده و تنظیم دستورالعمل سیستمی" },
+              { command: "settings", description: "منوی تنظیمات تعاملی ربات" },
+            ], { scope: { type: "default" } }).catch(() => {});
             await bot.api.deleteMyCommands({ scope: { type: "all_group_chats" } }).catch(() => {});
-            await bot.api.setMyCommands([], { scope: { type: "default" } }).catch(() => {});
-            console.log("✅ Exclusive Admin Telegram Commands registered for Mehdi only!");
+            console.log("✅ Standard Slash Commands registered for users via setMyCommands!");
           } catch (e: any) {
             console.warn("⚠️ Could not set bot commands automatically:", e?.message || e);
           }

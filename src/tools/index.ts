@@ -3,13 +3,15 @@ import { getCryptoPrices } from "../services/crypto";
 import { queryBenchmark, LMSYS_ARENA_SUMMARY, TOP_HARDWARE_BENCHMARKS } from "../services/benchmarks";
 import { fetchAndAnalyzeLink, scrapeWebPageContent, executeFetchPage } from "../services/linkReader";
 import { searchWeb, executeWebSearch } from "../services/webSearch";
-import { addTask, getTasks, boostUserQuota } from "../db";
+import { addTask, getTasks, boostUserQuota, proposeRule } from "../db";
 import { runToolWithLogger } from "../utils/toolLogger";
 import { CONFIG } from "../config";
 import { adminToolsSchema, executeAdminTool, setupTrackingMiddleware } from "./adminTools";
 import { webToolsDeclaration, executeWebTool } from "./webTools";
 import { executeTool as executeCustomTool } from "../tools";
 import { sendMusicToTelegram } from "../services/musicService";
+import { generateChatDigest } from "../services/digestService";
+import { InlineKeyboard } from "grammy";
 
 export { adminToolsSchema, executeAdminTool, setupTrackingMiddleware, webToolsDeclaration, executeWebTool };
 
@@ -157,6 +159,29 @@ export const TOOLS_SCHEMA: ToolDefinition[] = [
       required: ["query"],
     },
   },
+  {
+    name: "propose_memory_rule",
+    description: "پیشنهاد و ثبت قانون یا تغییر رفتار جدید در حافظه هوش مصنوعی جهت تایید ادمین. هرگز قبل از تایید ادعای ذخیره شدن نکنید.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        key: { type: "STRING", description: "شناسه یا عنوان کوتاه قانون (مثلاً tone_humor یا response_style)" },
+        value: { type: "STRING", description: "متن کامل دستورالعمل یا قانون رفتاری" },
+      },
+      required: ["key", "value"],
+    },
+  },
+  {
+    name: "generate_chat_digest",
+    description: "تولید دایجست و خلاصه‌سازی ساختاریافته پیام‌های اخیر گفتگو (نکات کلیدی، تصمیمات، مشارکت‌کنندگان) با حذف نویز و پیام‌های بیارزش.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        limit: { type: "INTEGER", description: "تعداد پیام‌های اخیر جهت بررسی (پیش‌فرض ۱۰۰)" },
+        focus: { type: "STRING", description: "موضوع یا شخص خاص برای تمرکز خلاصه (اختیاری)" },
+      },
+    },
+  },
 ];
 
 export async function executeTool(
@@ -267,6 +292,55 @@ export async function executeTool(
           if (!ctx) return JSON.stringify({ ok: false, error: "کانتکست تلگرام در دسترس نیست." });
           const res = await sendMusicToTelegram(ctx, query, args.title, args.performer);
           return JSON.stringify(res);
+        });
+      }
+      case "propose_memory_rule": {
+        return await runToolWithLogger("PROPOSE_MEMORY_RULE", JSON.stringify(args), async () => {
+          const key = String(args.key || "").trim();
+          const value = String(args.value || "").trim();
+          if (!key || !value) {
+            return JSON.stringify({ ok: false, error: "شناسه (key) و متن قانون (value) الزامی هستند." });
+          }
+          const ruleId = proposeRule(key, value);
+          const adminId = CONFIG.ADMIN_IDS[0] || userId;
+
+          const kb = new InlineKeyboard()
+            .text("✅ تایید و اعمال", `approve_rule:${ruleId}`)
+            .text("❌ لغو", `reject_rule:${ruleId}`);
+
+          const messageText = (
+            `📋 <b>پیشنهاد قانون رفتاری جدید در حافظه هوش مصنوعی (Human-in-the-Loop):</b>\n\n` +
+            `🔑 <b>شناسه قانون:</b> <code>${key}</code>\n` +
+            `📝 <b>دستورالعمل:</b>\n${value}\n\n` +
+            `<i>آیا این قانون تایید و به تمام درخواست‌های بعدی هوش مصنوعی تزریق شود؟</i>`
+          );
+
+          if (ctx?.api?.sendMessage) {
+            await ctx.api.sendMessage(adminId, messageText, {
+              reply_markup: kb,
+              parse_mode: "HTML",
+            }).catch((e: any) => console.warn("Failed to send propose rule message to admin:", e?.message));
+          } else if (ctx?.reply) {
+            await ctx.reply(messageText, {
+              reply_markup: kb,
+              parse_mode: "HTML",
+            }).catch(() => {});
+          }
+
+          return JSON.stringify({
+            ok: true,
+            ruleId,
+            message: `قانون «${key}» در دیتابیس با وضعیت approved=0 ذخیره شد و پیام شیشه‌ای جهت تایید/لغو برای رئیس ارسال گردید. تا زمان تایید ادمین اعمال نمی‌شود.`,
+          });
+        });
+      }
+      case "generate_chat_digest": {
+        return await runToolWithLogger("GENERATE_CHAT_DIGEST", JSON.stringify(args), async () => {
+          const chatId = ctx?.chat?.id || userId;
+          const limit = Number(args.limit) || 100;
+          const focus = args.focus ? String(args.focus) : undefined;
+          const digest = await generateChatDigest(chatId, limit, focus);
+          return digest;
         });
       }
       default:
