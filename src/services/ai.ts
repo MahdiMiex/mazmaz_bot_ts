@@ -202,10 +202,11 @@ export async function askGemini(
     const rawCandidates = [
       preferredModel,
       CONFIG.AI_MODEL,
-      "gemini-3.8-flash",
-      "gemini-3.7-flash",
-      "gemini-3.6-flash",
       "gemini-3.5-flash",
+      "gemini-3-flash-preview",
+      "gemini-flash-lite-latest",
+      "gemini-3.7-flash",
+      "gemini-3.8-flash",
       "gemini-3-flash-preview",
       "gemini-flash-latest",
       "gemini-flash-lite-latest",
@@ -645,25 +646,33 @@ export async function askGemini(
           },
         });
 
-        // اجرای ابزارها (Function Calling) با لاگر ترمینالی و پاسخ به مدل
+        // اجرای ابزارها (Function Calling) و سپس گرفتن پاسخ متنی نهایی
         if (response?.functionCalls && response.functionCalls.length > 0) {
-          const call = response.functionCalls[0];
-          const toolResult = await executeTool(call.name, call.args || {}, userId, ctx);
-
           workingContents.push(response.candidates[0].content);
-          workingContents.push({
-            role: "user",
-            parts: [
-              {
-                functionResponse: {
-                  name: call.name,
-                  response: { output: toolResult },
-                },
-              },
-            ],
-          });
 
-          const finalRes = await ai.models.generateContent({
+          for (const call of response.functionCalls) {
+            const toolResult = await executeTool(
+              call.name,
+              call.args || {},
+              userId,
+              ctx
+            );
+
+            workingContents.push({
+              role: "user",
+              parts: [
+                {
+                  functionResponse: {
+                    name: call.name,
+                    response: { output: toolResult },
+                  },
+                },
+              ],
+            });
+          }
+
+          // بعد از دریافت نتیجه ابزار، Gemini باید پاسخ نهایی متنی بدهد.
+          response = await ai.models.generateContent({
             model: m,
             contents: workingContents,
             config: {
@@ -676,7 +685,6 @@ export async function askGemini(
               },
             },
           });
-          response = finalRes;
         }
 
         if (response) break;
@@ -691,7 +699,23 @@ export async function askGemini(
       throw lastErr;
     }
 
-    const reply = response.text || "هوم؟ حواسم پرت شد، چی گفتی؟";
+    // استخراج امن متن؛ response.text ممکن است به خاطر وجود functionCall/non-text parts خطا بدهد.
+    let reply = "";
+
+    try {
+      const parts = response?.candidates?.[0]?.content?.parts || [];
+      reply = parts
+        .filter((part: any) => typeof part?.text === "string")
+        .map((part: any) => part.text)
+        .join("")
+        .trim();
+    } catch (e) {
+      console.warn("[GEMINI] Failed to extract response text:", e);
+    }
+
+    if (!reply) {
+      reply = "هوم؟ جوابم وسط راه گم شد 😅 یه بار دیگه بفرست.";
+    }
 
     // ذخیره در حافظه دیتابیس برای تداوم مکالمه
     saveChatMessage(userId, "user", prompt);
