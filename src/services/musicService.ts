@@ -22,6 +22,13 @@ export async function downloadAudio(queryOrUrl: string): Promise<MusicDownloadRe
   }
 
   const isUrl = /^https?:\/\//i.test(cleanInput);
+  if (typeof query === "string" && query.includes("spotify.com/track/")) {
+      try {
+        const _sRes = await fetch("https://open.spotify.com/oembed?url=" + encodeURIComponent(query));
+        const _sData = await _sRes.json();
+        if (_sData && _sData.title) query = "scsearch1:" + _sData.title;
+      } catch {}
+    }
   const target = isUrl ? cleanInput : `scsearch1:${cleanInput}`;
   const id = `mazmaz_audio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const outTemplate = path.join("/tmp", `${id}.%(ext)s`);
