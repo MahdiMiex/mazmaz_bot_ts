@@ -44,6 +44,7 @@ import { ADMIN_REPLY_TARGET } from "./services/feedback";
 import { sendSafeMessage, withTyping } from "./utils/chunker";
 import { escapeHtml } from "./utils/formatter";
 import { downloadMedia, cleanupFile } from "./services/mediaDownloader";
+import { sendMusicToTelegram } from "./services/musicService";
 import { getWeather } from "./services/weather";
 import { getCryptoPrices } from "./services/crypto";
 import { getDollarAndGoldReport } from "./services/currency";
@@ -226,6 +227,22 @@ bot.command(["dollar", "dollar@mazmazAgentBot", "arz", "tala"], async (ctx) => {
       reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
     });
   }
+});
+
+bot.command(["music", "song", "ahang", "music@mazmazAgentBot"], async (ctx) => {
+  const query = ctx.match?.trim();
+  if (!query) {
+    return ctx.reply(
+      "🎵 <b>راهنمای دریافت موزیک:</b>\n\n" +
+      "کافیه نام آهنگ، خواننده یا لینک را بعد از دستور وارد کنی:\n" +
+      "• <code>/music شادمهر تقدیر</code>\n" +
+      "• <code>/music Shape of You Ed Sheeran</code>\n" +
+      "• <code>/music https://soundcloud.com/...</code>\n\n" +
+      "⚡ فایل صوتی مستقیماً تا سقف ۵۰ مگابایت با بالاترین کیفیت در چت ارسال می‌شود.",
+      { parse_mode: "HTML" }
+    );
+  }
+  await sendMusicToTelegram(ctx, query);
 });
 
 bot.command(["setkey", "setkey@mazmazAgentBot"], async (ctx) => {
@@ -1485,10 +1502,13 @@ async function launchBotWithResilience() {
               // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه تاریخ، ساعت، کارهای جدید و رفع باگ‌ها
               await bot.api.sendMessage(
                 adminId,
-                `🚀 <b>آپدیت جدید مزمز با هندلر ری‌اکشن خودکار فعال شد!</b>\n\n` +
+                `🚀 <b>آپدیت جدید مزمز با قابلیت اختصاصی دانلود موزیک و اصلاح مدل‌های جمینای فعال شد!</b>\n\n` +
                 `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
-                `🛠️ <b>اقدامات جدید در این نسخه:</b>\n` +
-                `• 👋 <b>ری‌اکشن هوشمند خودکار به پیام‌های خداحافظی و درود:</b> تطابق دقیق با رجکس مرزبندی‌شده کلمات (جلوگیری از مچ اشتباه در کلماتی مانند «باید» یا «بایگانی»)، ری‌اکشن با ایموجی 👋، مدیریت امن خطاها با <code>try/catch</code> و حفظ کامل زنجیره میدلورها با <code>return next()</code> جهت تداوم پاسخگویی هوش مصنوعی و دستورات بعدی.\n\n` +
+                `🛠️ <b>اقدامات جدید و باگ‌های رفع‌شده در این نسخه:</b>\n` +
+                `• 🎵 <b>جستجو، دانلود و ارسال مستقیم آهنگ و فایل صوتی (<code>download_music</code> و <code>/music</code>):</b> پشتیبانی کامل از استخراج و ارسال صوت تا سقف ۵۰ مگابایت با متد رسمی <code>sendAudio</code> در تلگرام، استخراج خودکار متادیتا (نام اثر و خواننده)، کیفیت ۱۹۲ کیلوبیت و پاکسازی آنی فایل‌های موقت.\n` +
+                `• 🧠 <b>رفع کامل توهم عدم دسترسی هوش مصنوعی:</b> تزریق قوانین صریح در پرامپت سیستمی جهت جلوگیری از ادعای نیاز به یوزربات یا محدودیت تلگرام و فراخوانی بلادرنگ ابزار موزیک در گفتگو.\n` +
+                `• ⚡ <b>رفع ارور ۴۰۴ مدل جمینای:</b> حذف شناسه نامعتبر <code>gemini-2.5-flash-lite</code> و جایگزینی با شناسه‌های رسمی و پایدار <code>gemini-2.0-flash</code> و <code>gemini-2.0-flash-lite</code> در لیست کاندیداها و فال‌بک‌ها.\n` +
+                `• 🐳 <b>تجهیز محیط داکر به ffmpeg و yt-dlp:</b> ارتقای Dockerfile برای پشتیبانی بی‌نقص از استخراج صوت روی بستر دپلوی سرور (Railway).\n\n` +
                 `<i>مزمز دقیق، منظم و گوش‌به‌فرمان در خدمت شماست، رئیس!</i>`,
                 { parse_mode: "HTML" }
               ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));

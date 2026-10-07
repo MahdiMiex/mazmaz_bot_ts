@@ -3,7 +3,10 @@ FROM oven/bun:1-debian
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y sqlite3 ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y sqlite3 ca-certificates curl ffmpeg python3 && \
+    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy dependency specifications first for Docker layer caching
 COPY package.json bun.lock tsconfig.json ./

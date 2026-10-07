@@ -28,7 +28,7 @@ export const CONFIG = {
     .split(",")
     .map((k) => k.trim())
     .filter(Boolean),
-  AI_MODEL: process.env.AI_MODEL || "gemini-3.5-flash-lite",
+  AI_MODEL: process.env.AI_MODEL || "gemini-2.0-flash",
   TAVILY_API_KEY: process.env.TAVILY_API_KEY || "",
   BRAVE_API_KEY: process.env.BRAVE_API_KEY || "",
   SEARXNG_URL: process.env.SEARXNG_URL || "",

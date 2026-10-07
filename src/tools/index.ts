@@ -9,6 +9,7 @@ import { CONFIG } from "../config";
 import { adminToolsSchema, executeAdminTool, setupTrackingMiddleware } from "./adminTools";
 import { webToolsDeclaration, executeWebTool } from "./webTools";
 import { executeTool as executeCustomTool } from "../tools";
+import { sendMusicToTelegram } from "../services/musicService";
 
 export { adminToolsSchema, executeAdminTool, setupTrackingMiddleware, webToolsDeclaration, executeWebTool };
 
@@ -134,6 +135,28 @@ export const TOOLS_SCHEMA: ToolDefinition[] = [
       required: ["targetUserId"],
     },
   },
+  {
+    name: "download_music",
+    description: "جستجو، دانلود و ارسال مستقیم آهنگ یا فایل صوتی در تلگرام تا سقف ۵۰ مگابایت با متد رسمی sendAudio. ورودی می‌تواند نام آهنگ، خواننده یا لینک (YouTube, SoundCloud, Spotify, لینک مستقیم صوتی) باشد.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        query: {
+          type: "STRING",
+          description: "نام آهنگ و خواننده (مانند 'شادمهر تقدیر' یا 'shape of you') یا لینک صوتی",
+        },
+        title: {
+          type: "STRING",
+          description: "عنوان آهنگ (اختیاری)",
+        },
+        performer: {
+          type: "STRING",
+          description: "نام خواننده یا هنرمند (اختیاری)",
+        },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 export async function executeTool(
@@ -233,6 +256,16 @@ export async function executeTool(
       case "manage_bot_chats": {
         return await runToolWithLogger(`ADMIN_${toolName.toUpperCase()}`, JSON.stringify(args), async () => {
           const res = await executeAdminTool(ctx?.api, ctx, toolName, args, userId);
+          return JSON.stringify(res);
+        });
+      }
+      case "download_music":
+      case "send_music": {
+        return await runToolWithLogger("DOWNLOAD_MUSIC", JSON.stringify(args), async () => {
+          const query = args.query || args.url || args.song || args.name || "";
+          if (!query) return JSON.stringify({ ok: false, error: "نام آهنگ یا لینک صوتی مشخص نشده است." });
+          if (!ctx) return JSON.stringify({ ok: false, error: "کانتکست تلگرام در دسترس نیست." });
+          const res = await sendMusicToTelegram(ctx, query, args.title, args.performer);
           return JSON.stringify(res);
         });
       }

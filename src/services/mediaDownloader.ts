@@ -28,9 +28,15 @@ export async function downloadMedia(
   const args = [
     "yt-dlp",
     "--no-playlist",
+    "--extractor-args",
+    "youtube:player_client=android",
     "--max-filesize",
     "49M",
   ];
+
+  if (CONFIG.USE_PROXY && CONFIG.PROXY_URL) {
+    args.push("--proxy", CONFIG.PROXY_URL);
+  }
 
   if (audioOnly) {
     args.push("-x", "--audio-format", "mp3", "--audio-quality", "192K", "-o", outTemplate, url);

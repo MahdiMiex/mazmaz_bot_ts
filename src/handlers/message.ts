@@ -1,6 +1,7 @@
 import { Context, InlineKeyboard } from "grammy";
 import { askGemini, checkProfanity, isPersian, testGeminiKey, isSensitiveExfiltrationAttempt } from "../services/ai";
 import { isMediaUrl } from "../services/mediaDownloader";
+import { sendMusicToTelegram } from "../services/musicService";
 import { isGeneralWebUrl, fetchAndAnalyzeLink } from "../services/linkReader";
 import { queryBenchmark } from "../services/benchmarks";
 import { getWeather, extractWeatherIntent } from "../services/weather";
@@ -455,6 +456,14 @@ export async function handleTextMessage(ctx: Context) {
       "📥 <b>لینک چندرسانه‌ای شناسایی شد!</b>\nنوع خروجی دلخواهتان را انتخاب کنید:",
       { ...replyOpts, reply_markup: kb, parse_mode: "HTML" }
     );
+    return;
+  }
+
+  // 3.5 دریافت و ارسال مستقیم آهنگ و فایل صوتی (سقف ۵۰ مگابایت)
+  const musicMatch = (cleanText || text).match(/^(?:دانلود\s+)?(?:آهنگ|موزیک|ترانه|موسیقی)\s+(.+)/i);
+  if (musicMatch && musicMatch[1]) {
+    incrementStat("downloads_requested");
+    await sendMusicToTelegram(ctx, musicMatch[1].trim());
     return;
   }
 
