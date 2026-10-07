@@ -13,7 +13,7 @@ function getDatabasePath(): string {
 }
 
 export const CONFIG = {
-  BOT_TOKEN: process.env.BOT_TOKEN || "8715729332:AAG3BuKTC8irEHMHpzG37kpSh1_erB43ivA",
+  BOT_TOKEN: process.env.BOT_TOKEN || "",
   ADMIN_IDS: (process.env.ADMIN_IDS || "8062873417")
     .split(",")
     .map((id) => parseInt(id.trim(), 10))

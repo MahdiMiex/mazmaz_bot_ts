@@ -63,6 +63,11 @@ import { setupTrackingMiddleware } from "./tools/adminTools";
 
 console.log("🚀 Initializing mazmaz Telegram Bot with Bun & grammY...");
 
+if (!CONFIG.BOT_TOKEN) {
+  console.error("❌ خطای اساسی: توکن ربات تلگرام (BOT_TOKEN) در متغیرهای محیطی (.env) تعریف نشده است!");
+  process.exit(1);
+}
+
 const agent = CONFIG.USE_PROXY ? new HttpsProxyAgent(CONFIG.PROXY_URL) : undefined;
 
 export const bot = new Bot(CONFIG.BOT_TOKEN, {

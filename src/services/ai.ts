@@ -202,11 +202,13 @@ export async function askGemini(
     const rawCandidates = [
       preferredModel,
       CONFIG.AI_MODEL,
-      "gemini-2.0-flash",
-      "gemini-2.0-flash-lite",
-      "gemini-2.5-flash",
       "gemini-3.8-flash",
+      "gemini-3.7-flash",
+      "gemini-3.6-flash",
+      "gemini-3.5-flash",
+      "gemini-3-flash-preview",
       "gemini-flash-latest",
+      "gemini-flash-lite-latest",
     ];
     const modelCandidates = [...new Set(rawCandidates.filter(Boolean))] as string[];
 
