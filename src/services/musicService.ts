@@ -22,7 +22,7 @@ export async function downloadAudio(queryOrUrl: string): Promise<MusicDownloadRe
   }
 
   const isUrl = /^https?:\/\//i.test(cleanInput);
-  const target = isUrl ? cleanInput : `ytsearch1:${cleanInput}`;
+  const target = isUrl ? cleanInput : `scsearch1:${cleanInput}`;
   const id = `mazmaz_audio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const outTemplate = path.join("/tmp", `${id}.%(ext)s`);
 

@@ -1,5 +1,17 @@
 {
-  "groups": [],
+  "groups": [
+    {
+      "chat_id": -1004356087977,
+      "title": "Mongol abad",
+      "type": "supergroup",
+      "added_by_id": 8062873417,
+      "added_by_name": "zZ",
+      "added_by_username": "mmahdiz44",
+      "status": "approved",
+      "created_at": "2026-10-07 20:48:27",
+      "updated_at": "2026-10-07 20:48:27"
+    }
+  ],
   "users": [
     {
       "user_id": 7142972906,
@@ -51,6 +63,10 @@
     {
       "key": "custom_footer",
       "value": ""
+    },
+    {
+      "key": "custom_instruction",
+      "value": "You are now operating in 'Gemini 2.0 Flash Lite' mode. Be extremely fast, concise, and technical. Use the latest optimization patterns."
     }
   ]
 }
