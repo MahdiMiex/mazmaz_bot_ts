@@ -40,6 +40,90 @@ export function isPersian(text: string): boolean {
   return (persianChars ? persianChars.length : 0) > text.length * 0.2;
 }
 
+export function isDeadModel(name: string): boolean {
+  const lower = (name || "").toLowerCase().trim();
+  return (
+    lower.startsWith("gemini-2.0-") ||
+    lower.startsWith("gemini-2.5-") ||
+    lower === "gemini-2.0" ||
+    lower === "gemini-2.5" ||
+    lower === "gemini-2.0-flash" ||
+    lower === "gemini-2.0-flash-lite"
+  );
+}
+
+export interface ModelResolution {
+  model: string;
+  source: "stored override" | "GEMINI_MODELS" | "AI_MODEL" | "default";
+}
+
+export function getResolvedActiveModel(): ModelResolution {
+  // 1. Stored /model override (must be in ALLOWED_MODELS and not dead)
+  const stored = getSetting("ai_model");
+  if (stored && CONFIG.ALLOWED_MODELS.includes(stored) && !isDeadModel(stored)) {
+    return { model: stored, source: "stored override" };
+  }
+
+  // 2. GEMINI_MODELS env var (first allowed, non-dead candidate)
+  for (const m of CONFIG.GEMINI_MODELS) {
+    if (CONFIG.ALLOWED_MODELS.includes(m) && !isDeadModel(m)) {
+      return { model: m, source: "GEMINI_MODELS" };
+    }
+  }
+
+  // 3. Existing AI_MODEL (if allowed and non-dead)
+  if (CONFIG.AI_MODEL && CONFIG.ALLOWED_MODELS.includes(CONFIG.AI_MODEL) && !isDeadModel(CONFIG.AI_MODEL)) {
+    return { model: CONFIG.AI_MODEL, source: "AI_MODEL" };
+  }
+
+  // 4. Safe default in code
+  const safeDefault = CONFIG.ALLOWED_MODELS.find((m) => !isDeadModel(m)) || "gemini-1.5-flash";
+  return { model: safeDefault, source: "default" };
+}
+
+export function getModelCandidateChain(): string[] {
+  const active = getResolvedActiveModel().model;
+  const rawList = [
+    active,
+    ...CONFIG.GEMINI_MODELS,
+    CONFIG.AI_MODEL,
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
+  ];
+  return [...new Set(rawList.filter(Boolean))].filter((m) => !isDeadModel(m));
+}
+
+export async function checkAvailableGeminiModels(apiKey: string): Promise<void> {
+  if (!apiKey) return;
+  try {
+    const checkAi = new GoogleGenAI({
+      apiKey,
+      // @ts-ignore
+      httpOptions: agent ? { agent } : undefined,
+    });
+    const pager = await checkAi.models.list();
+    const liveNames: string[] = [];
+    for await (const m of pager) {
+      if (m.name) {
+        liveNames.push(m.name.replace(/^models\//, ""));
+      }
+    }
+    const combinedConfigured = [...new Set([...CONFIG.GEMINI_MODELS, ...CONFIG.ALLOWED_MODELS])].filter(
+      (m) => !isDeadModel(m)
+    );
+    for (const modelName of combinedConfigured) {
+      if (!liveNames.includes(modelName)) {
+        console.warn(`⚠️ [GEMINI MODEL WARNING] Configured model "${modelName}" was not found in Google models.list!`);
+      }
+    }
+    const res = getResolvedActiveModel();
+    console.log(`🤖 [GEMINI] Active model resolved: "${res.model}" (Source: ${res.source})`);
+  } catch (err: any) {
+    console.warn(`⚠️ [GEMINI] Could not fetch models.list at startup: ${err?.message || err}`);
+  }
+}
+
 export async function testGeminiKey(apiKey: string): Promise<{ ok: boolean; message: string }> {
   const cleanKey = apiKey.trim();
   const testAi = new GoogleGenAI({
@@ -48,13 +132,7 @@ export async function testGeminiKey(apiKey: string): Promise<{ ok: boolean; mess
     httpOptions: agent ? { agent } : undefined,
   });
 
-  const testModels = [
-    CONFIG.AI_MODEL || "gemini-2.0-flash",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-flash-latest",
-  ];
+  const testModels = getModelCandidateChain();
 
   let lastError: any = null;
 
@@ -198,20 +276,7 @@ export async function askGemini(
       httpOptions: agent ? { agent } : undefined,
     });
 
-    const preferredModel = getSetting("ai_model");
-    const rawCandidates = [
-      preferredModel,
-      CONFIG.AI_MODEL,
-      "gemini-3.5-flash",
-      "gemini-3-flash-preview",
-      "gemini-flash-lite-latest",
-      "gemini-3.7-flash",
-      "gemini-3.8-flash",
-      "gemini-3-flash-preview",
-      "gemini-flash-latest",
-      "gemini-flash-lite-latest",
-    ];
-    const modelCandidates = [...new Set(rawCandidates.filter(Boolean))] as string[];
+    const modelCandidates = getModelCandidateChain();
 
     // تعیین سیستم پرامپت پویا بر اساس هویت مخاطب (رئیس مهدی در برابر سایر کاربران)
     const adminSystemInstruction = `شما «مزمز» یا mazmaz هستید؛ یک ربات تلگرام فوق‌العاده هوشمند، فنی، کارکشته و توسعه‌یافته با تکیه بر استک مدرن (TypeScript, grammY, Bun, SQLite و Google Gemini). سازنده و ادمین اصلی شما «مهدی» است.
@@ -630,73 +695,145 @@ export async function askGemini(
     let response: any = null;
     let lastErr: any = null;
 
-    const tempSetting = parseFloat(getSetting("ai_temperature", "0.7"));
-    const activeTemperature = !isNaN(tempSetting) ? tempSetting : 0.7;
+    const tempRaw = parseFloat(getSetting("ai_temperature", "0.7"));
+    const activeTemperature = !isNaN(tempRaw) && tempRaw >= 0.0 && tempRaw <= 2.0 ? tempRaw : 0.7;
+
+    const keyPool = CONFIG.GEMINI_API_KEYS.filter((k) => k && k.length > 5);
+    if (keyPool.length === 0 && apiKey) {
+      keyPool.push(apiKey);
+    }
+    let currentKeyIdx = 0;
+
+    const getAiClient = (key: string) =>
+      new GoogleGenAI({
+        apiKey: key,
+        // @ts-ignore
+        httpOptions: agent ? { agent } : undefined,
+      });
+
+    let modelSucceeded = false;
 
     for (const m of modelCandidates) {
-      const workingContents = JSON.parse(JSON.stringify(contents));
-      try {
-        response = await ai.models.generateContent({
-          model: m,
-          contents: workingContents,
-          config: {
-            systemInstruction,
-            temperature: activeTemperature,
-            tools,
-          },
-        });
+      if (modelSucceeded) break;
 
-        // اجرای ابزارها (Function Calling) و سپس گرفتن پاسخ متنی نهایی
-        if (response?.functionCalls && response.functionCalls.length > 0) {
-          workingContents.push(response.candidates[0].content);
+      const maxRetries = 3;
+      let attempt = 0;
 
-          for (const call of response.functionCalls) {
-            const toolResult = await executeTool(
-              call.name,
-              call.args || {},
-              userId,
-              ctx
-            );
+      while (attempt < maxRetries) {
+        attempt++;
+        const currentKey = keyPool[currentKeyIdx % keyPool.length] || apiKey;
+        const currentAi = getAiClient(currentKey);
+        const workingContents = JSON.parse(JSON.stringify(contents));
 
-            workingContents.push({
-              role: "user",
-              parts: [
-                {
-                  functionResponse: {
-                    name: call.name,
-                    response: { output: toolResult },
-                  },
-                },
-              ],
-            });
-          }
-
-          // بعد از دریافت نتیجه ابزار، Gemini باید پاسخ نهایی متنی بدهد.
-          response = await ai.models.generateContent({
+        try {
+          let callRes = await currentAi.models.generateContent({
             model: m,
             contents: workingContents,
             config: {
               systemInstruction,
-              temperature: 0.6,
-              toolConfig: {
-                functionCallingConfig: {
-                  mode: "NONE",
-                },
-              },
+              temperature: activeTemperature,
+              tools,
             },
           });
-        }
 
-        if (response) break;
-      } catch (err: any) {
-        lastErr = err;
-        console.warn(`[GEMINI FALLBACK] Model ${m} failed (${err?.status || err?.message || err}), switching to next model candidate...`);
+          // اجرای ابزارها (Function Calling) و سپس گرفتن پاسخ متنی نهایی
+          if (callRes?.functionCalls && callRes.functionCalls.length > 0) {
+            workingContents.push(callRes.candidates[0].content);
+
+            for (const call of callRes.functionCalls) {
+              const toolResult = await executeTool(
+                call.name,
+                call.args || {},
+                userId,
+                ctx
+              );
+
+              workingContents.push({
+                role: "user",
+                parts: [
+                  {
+                    functionResponse: {
+                      name: call.name,
+                      response: { output: toolResult },
+                    },
+                  },
+                ],
+              });
+            }
+
+            // بعد از دریافت نتیجه ابزار، Gemini باید پاسخ نهایی متنی بدهد
+            callRes = await currentAi.models.generateContent({
+              model: m,
+              contents: workingContents,
+              config: {
+                systemInstruction,
+                temperature: 0.6,
+                toolConfig: {
+                  functionCallingConfig: {
+                    mode: "NONE",
+                  },
+                },
+              },
+            });
+          }
+
+          response = callRes;
+          modelSucceeded = true;
+          break;
+        } catch (err: any) {
+          lastErr = err;
+          const status =
+            err?.status ||
+            err?.error?.code ||
+            (String(err?.message || "").includes("503")
+              ? 503
+              : String(err?.message || "").includes("429")
+              ? 429
+              : String(err?.message || "").includes("404")
+              ? 404
+              : 0);
+
+          // Non-retryable errors (400, 401, 403, 404): skip candidate immediately
+          if (status === 400 || status === 401 || status === 403 || status === 404) {
+            console.warn(`[GEMINI SKIP] Model ${m} returned status ${status}. Skipping to next candidate...`);
+            break;
+          }
+
+          // Rate limit (429): rotate to next key if multiple keys configured
+          if (status === 429) {
+            markKeyCooldown(currentKey, 60000);
+            if (keyPool.length > 1) {
+              currentKeyIdx = (currentKeyIdx + 1) % keyPool.length;
+              console.warn(`[GEMINI ROTATE] Model ${m} hit 429. Rotating to next key (pool size: ${keyPool.length})...`);
+              continue;
+            }
+          }
+
+          // Server errors (503, 500) or rate limits (429): retry same model with backoff + jitter
+          if (status === 503 || status === 500 || status === 429) {
+            if (attempt < maxRetries) {
+              const baseDelay = attempt === 1 ? 1000 : attempt === 2 ? 2000 : 4000;
+              const jitter = Math.floor(Math.random() * 300);
+              const totalDelay = baseDelay + jitter;
+              console.warn(`[GEMINI RETRY] Model ${m} failed with status ${status} (attempt ${attempt}/${maxRetries}). Retrying in ${totalDelay}ms...`);
+              await new Promise((r) => setTimeout(r, totalDelay));
+              continue;
+            } else {
+              console.warn(`[GEMINI FALLBACK] Model ${m} failed after ${maxRetries} attempts (${status}), switching to next candidate...`);
+              break;
+            }
+          }
+
+          // Any other error: skip to next candidate
+          console.warn(`[GEMINI FALLBACK] Model ${m} failed (${err?.message || err}), switching to next candidate...`);
+          break;
+        }
       }
     }
 
-
     if (!response) {
-      throw lastErr;
+      console.error(`[GEMINI ERROR] All model candidates failed. Last status: ${lastErr?.status || lastErr?.message || "unknown"}`);
+      return "سرور هوش مصنوعی در حال حاضر شلوغ است، لطفاً یک دقیقه دیگر تلاش کنید ⏳";
     }
 
     // استخراج امن متن؛ response.text ممکن است به خاطر وجود functionCall/non-text parts خطا بدهد.
@@ -723,11 +860,8 @@ export async function askGemini(
 
     return reply;
   } catch (error: any) {
-    console.error("Gemini API Error:", error?.status || error?.message || error);
-    if (error?.status === 429) {
-      markKeyCooldown(apiKey, 60000);
-    }
-    return "ای بابا، اینترنت یا ای‌پی‌آی به مشکل خورده. یه ثانیه صبر کن دوباره امتحان کنیم.";
+    console.error("Gemini API Error:", error?.status || error?.message || "unknown error");
+    return "سرور هوش مصنوعی در حال حاضر شلوغ است، لطفاً یک دقیقه دیگر تلاش کنید ⏳";
   }
 }
 

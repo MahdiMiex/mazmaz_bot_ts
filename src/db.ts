@@ -3,13 +3,28 @@ import fs from "fs";
 import path from "path";
 import { CONFIG } from "./config";
 
-fs.mkdirSync(path.dirname(CONFIG.DB_PATH), { recursive: true });
-fs.mkdirSync(CONFIG.DOWNLOADS_DIR, { recursive: true });
+let activeDbPath = CONFIG.DB_PATH;
+const dbDir = path.dirname(activeDbPath);
+try {
+  fs.mkdirSync(dbDir, { recursive: true });
+  fs.accessSync(dbDir, fs.constants.W_OK);
+} catch (err: any) {
+  console.warn(`⚠️ [STORAGE WARNING] Directory "${dbDir}" is not writable or inaccessible (${err?.message || err}). Falling back to in-memory database!`);
+  activeDbPath = ":memory:";
+}
 
-export const db = new Database(CONFIG.DB_PATH);
+try {
+  fs.mkdirSync(CONFIG.DOWNLOADS_DIR, { recursive: true });
+} catch {}
 
-// Enable WAL mode for high concurrency
-db.run("PRAGMA journal_mode = WAL;");
+console.log(`📦 [DATABASE] Active SQLite storage path: ${activeDbPath}`);
+
+export const db = new Database(activeDbPath);
+
+// Enable WAL mode for high concurrency if file-based
+if (activeDbPath !== ":memory:") {
+  db.run("PRAGMA journal_mode = WAL;");
+}
 
 // Initialize tables
 db.run(`
@@ -155,6 +170,15 @@ export function setSetting(key: string, value: string): void {
     saveStateSnapshot();
   } catch (e: any) {
     console.warn("Failed to set bot setting:", e?.message);
+  }
+}
+
+export function deleteSetting(key: string): void {
+  try {
+    db.run("DELETE FROM bot_settings WHERE key = ?", [key]);
+    saveStateSnapshot();
+  } catch (e: any) {
+    console.warn("Failed to delete bot setting:", e?.message);
   }
 }
 

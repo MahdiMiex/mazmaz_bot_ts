@@ -28,7 +28,15 @@ export const CONFIG = {
     .split(",")
     .map((k) => k.trim())
     .filter(Boolean),
-  AI_MODEL: process.env.AI_MODEL || "gemini-2.0-flash",
+  AI_MODEL: process.env.AI_MODEL || "gemini-1.5-flash",
+  GEMINI_MODELS: (process.env.GEMINI_MODELS || "gemini-3.8-flash,gemini-1.5-flash,gemini-1.5-flash-8b,gemini-1.5-pro")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+  ALLOWED_MODELS: (process.env.ALLOWED_MODELS || process.env.GEMINI_MODELS || "gemini-3.8-flash,gemini-1.5-flash,gemini-1.5-flash-8b,gemini-1.5-pro")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
   TAVILY_API_KEY: process.env.TAVILY_API_KEY || "",
   BRAVE_API_KEY: process.env.BRAVE_API_KEY || "",
   SEARXNG_URL: process.env.SEARXNG_URL || "",
@@ -36,6 +44,17 @@ export const CONFIG = {
   DB_PATH: getDatabasePath(),
   DOWNLOADS_DIR: path.resolve(import.meta.dir, "../downloads"),
 };
+
+export function validateStartupConfig(): void {
+  if (CONFIG.ADMIN_IDS.length === 0 || CONFIG.ADMIN_IDS.some((id) => !Number.isFinite(id) || id <= 0)) {
+    console.error("❌ Fatal Configuration Error: ADMIN_IDS must contain at least one valid numeric Telegram ID!");
+    process.exit(1);
+  }
+  if (CONFIG.ALLOWED_MODELS.length === 0) {
+    console.error("❌ Fatal Configuration Error: ALLOWED_MODELS must be a non-empty list of model names!");
+    process.exit(1);
+  }
+}
 
 export function updateGeminiApiKey(newKey: string): boolean {
   const clean = newKey.trim();

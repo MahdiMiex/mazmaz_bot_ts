@@ -1,6 +1,6 @@
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import { HttpsProxyAgent } from "https-proxy-agent";
-import { CONFIG, updateGeminiApiKey } from "./config";
+import { CONFIG, updateGeminiApiKey, validateStartupConfig } from "./config";
 import { accessControlMiddleware } from "./handlers/access";
 import {
   handleStart,
@@ -46,6 +46,7 @@ import {
   getRuleById,
   getSetting,
   setSetting,
+  deleteSetting,
 } from "./db";
 import { ADMIN_REPLY_TARGET } from "./services/feedback";
 import { sendSafeMessage, withTyping } from "./utils/chunker";
@@ -57,16 +58,28 @@ import { getWeather } from "./services/weather";
 import { getCryptoPrices } from "./services/crypto";
 import { getDollarAndGoldReport } from "./services/currency";
 import { LMSYS_ARENA_SUMMARY, TOP_HARDWARE_BENCHMARKS } from "./services/benchmarks";
-import { testGeminiKey, clearUserHistory } from "./services/ai";
+import {
+  testGeminiKey,
+  clearUserHistory,
+  getResolvedActiveModel,
+  checkAvailableGeminiModels,
+} from "./services/ai";
 import { fetchAndAnalyzeLink } from "./services/linkReader";
 import { setupTrackingMiddleware } from "./tools/adminTools";
 
 console.log("🚀 Initializing mazmaz Telegram Bot with Bun & grammY...");
 
+validateStartupConfig();
+
 if (!CONFIG.BOT_TOKEN) {
   console.error("❌ خطای اساسی: توکن ربات تلگرام (BOT_TOKEN) در متغیرهای محیطی (.env) تعریف نشده است!");
   process.exit(1);
 }
+
+const startupModelRes = getResolvedActiveModel();
+console.log(`🤖 [CONFIG] Active AI model: "${startupModelRes.model}" (Source: ${startupModelRes.source})`);
+console.log(`📦 [CONFIG] Database storage path (DB_PATH): "${CONFIG.DB_PATH}"`);
+checkAvailableGeminiModels(CONFIG.GEMINI_API_KEY).catch(() => {});
 
 const agent = CONFIG.USE_PROXY ? new HttpsProxyAgent(CONFIG.PROXY_URL) : undefined;
 
@@ -322,22 +335,94 @@ bot.command(["history", "history@mazmazAgentBot"], async (ctx) => {
 
 // 1.3 دستور مشاهده و تغییر مدل هوش مصنوعی (/model)
 bot.command(["model", "model@mazmazAgentBot"], async (ctx) => {
-  const currentModel = getSetting("ai_model", CONFIG.AI_MODEL);
-  const kb = new InlineKeyboard()
-    .text("⚡ gemini-2.0-flash (پیش‌فرض سریع و دقیق)", "set_model:gemini-2.0-flash")
-    .row()
-    .text("🪶 gemini-2.0-flash-lite (فوق‌سبک و کم‌مصرف)", "set_model:gemini-2.0-flash-lite");
+  const fromId = ctx.from?.id;
+  if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) {
+    // Silently ignore non-admins
+    return;
+  }
+
+  const rawArg = ctx.message?.text?.replace(/^\/model(@\w+)?/i, "").trim() || "";
+  const resolved = getResolvedActiveModel();
+
+  // الف: بازنشانی مدل و حذف stored override
+  if (rawArg.toLowerCase() === "reset") {
+    const oldModel = resolved.model;
+    deleteSetting("ai_model");
+    const newRes = getResolvedActiveModel();
+    console.log(`[ADMIN MODEL RESET] Admin ${fromId} reset model override at ${new Date().toISOString()} (was: ${oldModel}, now: ${newRes.model} from ${newRes.source})`);
+    return ctx.reply(
+      `🔄 <b>تنظیم مدل هوش مصنوعی ریست شد:</b>\n\n` +
+      `• مدل فعال جدید: <code>${newRes.model}</code>\n` +
+      `• منبع تعیین: <b>${newRes.source}</b>\n\n` +
+      `اورراید ذخیره‌شده پاک شد و مدل بر اساس اولویت سیستم (${newRes.source}) اعمال می‌شود.`,
+      { parse_mode: "HTML" }
+    );
+  }
+
+  // ب: تغییر مدل با ارسال آرگومان
+  if (rawArg) {
+    if (CONFIG.ALLOWED_MODELS.includes(rawArg) && !isDeadModel(rawArg)) {
+      const oldModel = resolved.model;
+      setSetting("ai_model", rawArg);
+      console.log(`[ADMIN MODEL CHANGE] Admin ${fromId} changed model from ${oldModel} to ${rawArg} at ${new Date().toISOString()}`);
+      return ctx.reply(
+        `✅ <b>مدل هوش مصنوعی با موفقیت ذخیره و فعال شد:</b>\n\n` +
+        `• مدل قبلی: <code>${oldModel}</code>\n` +
+        `• مدل فعال جدید: <code>${rawArg}</code>\n` +
+        `• منبع: <b>stored override</b>`,
+        { parse_mode: "HTML" }
+      );
+    } else {
+      return ctx.reply(
+        `❌ <b>مدل انتخابی مجاز نیست!</b>\n\n` +
+        `مدل <code>${escapeHtml(rawArg)}</code> در لیست <code>ALLOWED_MODELS</code> وجود ندارد یا منسوخ شده است.\n\n` +
+        `مدل‌های مجاز:\n${CONFIG.ALLOWED_MODELS.map((m) => `• <code>${m}</code>`).join("\n")}`,
+        { parse_mode: "HTML" }
+      );
+    }
+  }
+
+  // ج: بدون آرگومان: نمایش وضعیت جاری، منبع و دکمه‌های شیشه‌ای
+  const kb = new InlineKeyboard();
+  for (const m of CONFIG.ALLOWED_MODELS) {
+    const isCurrent = m === resolved.model;
+    kb.text(`${isCurrent ? "🔘 " : ""}${m}`, `set_model:${m}`).row();
+  }
+  kb.text("🔄 ریست به حالت پیش‌فرض (Reset)", "reset_model_override").row();
 
   await ctx.reply(
-    `🧠 <b>تنظیمات مدل هوش مصنوعی:</b>\n\n` +
-      `• مدل فعال: <code>${currentModel}</code>\n\n` +
-      `جهت جابجایی بین مدل‌های رسمی و بدون خطای گوگل انتخاب کنید:`,
+    `🧠 <b>مدیریت و انتخاب مدل هوش مصنوعی:</b>\n\n` +
+    `• مدل فعال: <code>${resolved.model}</code>\n` +
+    `• منبع مقدار فعلی: <b>${resolved.source}</b>\n\n` +
+    `📋 <b>مدل‌های مجاز تعریف‌شده (ALLOWED_MODELS):</b>\n` +
+    `${CONFIG.ALLOWED_MODELS.map((m) => `• <code>${m}</code>`).join("\n")}\n\n` +
+    `💡 <i>راهنما:</i>\n` +
+    `• تغییر فوری: <code>/model &lt;model-name&gt;</code>\n` +
+    `• حذف اورراید: <code>/model reset</code>\n` +
+    `یا از دکمه‌های شیشه‌ای زیر انتخاب کنید:`,
     { reply_markup: kb, parse_mode: "HTML" }
   );
 });
 
 // 1.4 دستور تنظیم میزان خلاقیت پاسخ‌ها (/temp)
 bot.command(["temp", "temp@mazmazAgentBot", "temperature"], async (ctx) => {
+  const fromId = ctx.from?.id;
+  if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) {
+    return;
+  }
+
+  const rawArg = ctx.message?.text?.replace(/^\/temp(erature)?(@\w+)?/i, "").trim() || "";
+  if (rawArg) {
+    const val = parseFloat(rawArg);
+    if (isNaN(val) || val < 0.0 || val > 2.0) {
+      return ctx.reply("❌ مقدار دما باید یک عدد معتبر بین <code>0.0</code> تا <code>2.0</code> باشد.", { parse_mode: "HTML" });
+    }
+    const oldTemp = getSetting("ai_temperature", "0.7");
+    setSetting("ai_temperature", String(val));
+    console.log(`[ADMIN TEMP CHANGE] Admin ${fromId} changed temperature from ${oldTemp} to ${val} at ${new Date().toISOString()}`);
+    return ctx.reply(`✅ <b>دمای خلاقیت روی <code>${val}</code> تنظیم شد.</b>`, { parse_mode: "HTML" });
+  }
+
   const currentTemp = getSetting("ai_temperature", "0.7");
   const kb = new InlineKeyboard()
     .text("🎯 دقیق و فنی (0.2)", "set_temp:0.2")
@@ -348,8 +433,8 @@ bot.command(["temp", "temp@mazmazAgentBot", "temperature"], async (ctx) => {
 
   await ctx.reply(
     `🌡️ <b>تنظیم دمای خلاقیت (Creativity Temperature):</b>\n\n` +
-      `• مقدار فعلی: <code>${currentTemp}</code>\n\n` +
-      `مقادیر پایین برای کدنویسی و پاسخ‌های قطعی، و مقادیر بالا برای ایده‌پردازی و طنز مناسب هستند:`,
+    `• مقدار فعلی: <code>${currentTemp}</code>\n\n` +
+    `بازه مجاز: <code>0.0</code> (کاملاً قطعی و فنی) تا <code>2.0</code> (نهایت خلاقیت و تصادفی):`,
     { reply_markup: kb, parse_mode: "HTML" }
   );
 });
@@ -1052,22 +1137,77 @@ bot.callbackQuery("act_clear", async (ctx) => {
 });
 
 // دکمه‌های منوی تنظیمات
+// دکمه‌های منوی تنظیمات مدل و دما
 bot.callbackQuery(/^set_model:(.+)$/, async (ctx) => {
-  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
+  const fromId = ctx.from?.id;
+  if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) {
     return ctx.answerCallbackQuery({ text: "تنظیم مدل فقط توسط ادمین امکان‌پذیر است.", show_alert: true });
   }
-  const newModel = ctx.match[1];
+  const newModel = ctx.match[1].trim();
+  if (!CONFIG.ALLOWED_MODELS.includes(newModel) || isDeadModel(newModel)) {
+    return ctx.answerCallbackQuery({ text: "این مدل در لیست مجاز تعریف نشده است.", show_alert: true });
+  }
+  const oldModel = getResolvedActiveModel().model;
   setSetting("ai_model", newModel);
-  await ctx.editMessageText(`✅ <b>مدل فعال هوش مصنوعی به <code>${newModel}</code> تغییر یافت.</b>`, { parse_mode: "HTML" }).catch(() => {});
+  console.log(`[ADMIN MODEL CHANGE] Admin ${fromId} changed model from ${oldModel} to ${newModel} at ${new Date().toISOString()}`);
+  await ctx.editMessageText(
+    `✅ <b>مدل فعال هوش مصنوعی به <code>${newModel}</code> تغییر یافت.</b>\n` +
+    `منبع: <b>stored override</b>`,
+    { parse_mode: "HTML" }
+  ).catch(() => {});
   await ctx.answerCallbackQuery({ text: `مدل به ${newModel} تغییر یافت.` });
 });
 
+bot.callbackQuery("reset_model_override", async (ctx) => {
+  const fromId = ctx.from?.id;
+  if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) return;
+  const oldModel = getResolvedActiveModel().model;
+  deleteSetting("ai_model");
+  const newRes = getResolvedActiveModel();
+  console.log(`[ADMIN MODEL RESET] Admin ${fromId} reset model override at ${new Date().toISOString()} (was: ${oldModel}, now: ${newRes.model} from ${newRes.source})`);
+  await ctx.editMessageText(
+    `🔄 <b>اورراید مدل با موفقیت پاک شد.</b>\n\n` +
+    `• مدل فعال جدید: <code>${newRes.model}</code>\n` +
+    `• منبع تعیین: <b>${newRes.source}</b>`,
+    { parse_mode: "HTML" }
+  ).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "تنظیمات مدل به پیش‌فرض ریست شد." });
+});
+
+// B5: تایید یا رد پیشنهاد تغییر مدل توسط ابزار هوش مصنوعی
+bot.callbackQuery(/^approve_model:(.+)$/, async (ctx) => {
+  const fromId = ctx.from?.id;
+  if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) {
+    return ctx.answerCallbackQuery({ text: "فقط ادمین ربات مجاز به تایید تغییر مدل است.", show_alert: true });
+  }
+  const targetModel = ctx.match[1].trim();
+  if (!CONFIG.ALLOWED_MODELS.includes(targetModel) || isDeadModel(targetModel)) {
+    return ctx.answerCallbackQuery({ text: "مدل پیشنهادی در لیست مجاز قرار ندارد.", show_alert: true });
+  }
+  const oldModel = getResolvedActiveModel().model;
+  setSetting("ai_model", targetModel);
+  console.log(`[ADMIN MODEL APPROVED] Admin ${fromId} approved model change from ${oldModel} to ${targetModel} at ${new Date().toISOString()}`);
+  await ctx.editMessageText(`✅ <b>تغییر مدل به <code>${targetModel}</code> تایید و ذخیره شد.</b>\nمنبع: <b>stored override</b>`, { parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: `مدل به ${targetModel} تغییر یافت.` });
+});
+
+bot.callbackQuery("reject_model", async (ctx) => {
+  const fromId = ctx.from?.id;
+  if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) return;
+  await ctx.editMessageText("❌ <b>پیشنهاد تغییر مدل توسط ادمین لغو شد.</b>", { parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "پیشنهاد تغییر مدل رد شد." });
+});
+
 bot.callbackQuery(/^set_temp:([0-9.]+)$/, async (ctx) => {
-  if (!CONFIG.ADMIN_IDS.includes(ctx.from!.id)) {
+  const fromId = ctx.from?.id;
+  if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) {
     return ctx.answerCallbackQuery({ text: "تنظیم دما فقط توسط ادمین امکان‌پذیر است.", show_alert: true });
   }
-  const newTemp = ctx.match[1];
-  setSetting("ai_temperature", newTemp);
+  const newTemp = parseFloat(ctx.match[1]);
+  if (isNaN(newTemp) || newTemp < 0.0 || newTemp > 2.0) {
+    return ctx.answerCallbackQuery({ text: "مقدار دما باید بین 0.0 تا 2.0 باشد.", show_alert: true });
+  }
+  setSetting("ai_temperature", String(newTemp));
   await ctx.editMessageText(`✅ <b>دمای خلاقیت با موفقیت روی <code>${newTemp}</code> تنظیم شد.</b>`, { parse_mode: "HTML" }).catch(() => {});
   await ctx.answerCallbackQuery({ text: `دما به ${newTemp} تنظیم شد.` });
 });
@@ -1087,11 +1227,20 @@ bot.callbackQuery("reset_sysprompt", async (ctx) => {
 });
 
 bot.callbackQuery("cmd_menu_model", async (ctx) => {
-  const kb = new InlineKeyboard()
-    .text("⚡ gemini-2.0-flash", "set_model:gemini-2.0-flash")
-    .row()
-    .text("🪶 gemini-2.0-flash-lite", "set_model:gemini-2.0-flash-lite");
-  await ctx.editMessageText("🧠 <b>یکی از مدل‌های زیر را انتخاب کنید:</b>", { reply_markup: kb, parse_mode: "HTML" });
+  const resolved = getResolvedActiveModel();
+  const kb = new InlineKeyboard();
+  for (const m of CONFIG.ALLOWED_MODELS) {
+    const isCurrent = m === resolved.model;
+    kb.text(`${isCurrent ? "🔘 " : ""}${m}`, `set_model:${m}`).row();
+  }
+  kb.text("🔄 ریست به حالت پیش‌فرض", "reset_model_override").row();
+
+  await ctx.editMessageText(
+    `🧠 <b>انتخاب مدل هوش مصنوعی:</b>\n\n` +
+    `• مدل فعال: <code>${resolved.model}</code>\n` +
+    `• منبع: <b>${resolved.source}</b>`,
+    { reply_markup: kb, parse_mode: "HTML" }
+  );
 });
 
 bot.callbackQuery("cmd_menu_temp", async (ctx) => {
@@ -1805,13 +1954,14 @@ async function launchBotWithResilience() {
               // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه تاریخ، ساعت، کارهای جدید و رفع باگ‌ها
               await bot.api.sendMessage(
                 adminId,
-                `🛡️ <b>آپدیت امنیتی مزمز: پاکسازی سکرت‌ها و ایمن‌سازی ریپازیتوری گیت!</b>\n\n` +
+                `🚀 <b>آپدیت جدید مزمز: مدیریت هوشمند مدل‌های جمینای و پایداری سرور!</b>\n\n` +
                 `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
                 `🛠️ <b>اقدامات انجام‌شده در این نسخه:</b>\n` +
-                `• 🔒 <b>حذف کامل توکن هاردکدشده:</b> حذف توکن پیش‌فرض تلگرام از <code>src/config.ts</code> و الزام خواندن صرفاً از <code>process.env.BOT_TOKEN</code>.\n` +
-                `• 🚫 <b>ارتقای قوانین <code>.gitignore</code>:</b> ممانعت قطعی از ترکینگ هرگونه فایل سکرت، الگوهای <code>.env.*</code>، کلیدهای <code>*.key</code>، <code>*.pem</code> و <code>credentials.json</code> با حفظ استثنای <code>.env.example</code>.\n` +
-                `• ⚡ <b>اعتبارسنجی راه‌اندازی (Startup Guard):</b> بررسی الزامی بودن <code>BOT_TOKEN</code> در شروع به کار بات جهت جلوگیری از کرش نامشخص در محیط پروداکشن.\n\n` +
-                `<i>مزمز ایمن، محافظت‌شده و گوش‌به‌فرمان در خدمت شماست، رئیس مهدی!</i>`,
+                `• 🧠 <b>مدیریت پویا و بلادرنگ مدل‌ها (/model):</b> امکان مشاهده منبع فعال (stored override / GEMINI_MODELS / AI_MODEL / default)، تغییر مدل بدون ری‌استارت و قابلیت بازنشانی با <code>/model reset</code>.\n` +
+                `• 🔁 <b>سیستم تاب‌آوری خطاهای ۵۰۳ و ۴۲۹:</b> تلاش مجدد با تاخیر تصادفی (Exponential Backoff + Jitter) روی خطاهای ۵۰۳/۵۰۰ و چرخش هوشمند کلیدها (Key Rotation) در خطای ۴۲۹ قبل از تعویض مدل.\n` +
+                `• 🛡️ <b>پروتکل تایید انسانی (Human-in-the-Loop):</b> جلوگیری از تغییر مستقیم مدل توسط ابزار هوش مصنوعی و ارسال پیام تایید/لغو شیشه‌ای برای ادمین.\n` +
+                `• 💾 <b>پایداری دیتابیس در Railway:</b> پشتیبانی کامل از Volume مانت‌شده با متغیر <code>DB_PATH</code> و سوییچ ایمن به این‌مموری در صورت عدم دسترسی به دیسک.\n\n` +
+                `<i>مزمز دقیق، پایدار و وفادار در خدمت شماست، رئیس مهدی!</i>`,
                 { parse_mode: "HTML" }
               ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));
             }

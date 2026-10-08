@@ -1,4 +1,4 @@
-import { Bot, Context } from "grammy";
+import { Bot, Context, InlineKeyboard } from "grammy";
 import { db, setSetting } from "../db";
 import { CONFIG } from "../config";
 
@@ -238,6 +238,39 @@ export async function executeAdminTool(botOrApi: any, ctx: Context | any, name: 
     case "set_bot_setting": {
       const { key, value } = args;
       if (!key) return { ok: false, error: "کلید تنظیم مشخص نشده است." };
+
+      if (key === "ai_model" || key === "model") {
+        const proposedModel = String(value || "").trim();
+        if (!CONFIG.ALLOWED_MODELS.includes(proposedModel)) {
+          return {
+            ok: false,
+            error: `مدل پیشنهادی "${proposedModel}" در لیست مجاز (${CONFIG.ALLOWED_MODELS.join(", ")}) قرار ندارد.`,
+          };
+        }
+
+        const adminId = CONFIG.ADMIN_IDS[0] || userId;
+        const kb = new InlineKeyboard()
+          .text("✅ تایید تغییر مدل", `approve_model:${proposedModel}`)
+          .text("❌ لغو", "reject_model");
+
+        const msgText = (
+          `🤖 <b>پیشنهاد تغییر مدل هوش مصنوعی توسط دستیار (Human-in-the-Loop):</b>\n\n` +
+          `• مدل پیشنهادی: <code>${proposedModel}</code>\n\n` +
+          `<i>آیا تغییر مدل را تایید می‌کنید؟</i>`
+        );
+
+        if (api?.sendMessage) {
+          await api.sendMessage(adminId, msgText, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+        } else if (ctx?.reply) {
+          await ctx.reply(msgText, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+        }
+
+        return {
+          ok: true,
+          message: `پیشنهاد تغییر مدل به ${proposedModel} با دکمه‌های تایید برای رئیس مهدی ارسال شد و منتظر تایید است.`,
+        };
+      }
+
       setSetting(key, value || "");
       return { ok: true, message: `تنظیم ${key} با موفقیت ذخیره شد.` };
     }
