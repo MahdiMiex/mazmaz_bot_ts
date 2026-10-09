@@ -711,6 +711,7 @@ export async function askGemini(
 
     let modelSucceeded = false;
     let activeModelName = "";
+    const toolResultCache = new Map<string, any>();
 
     const extractPartsText = (res: any) =>
       (res?.candidates?.[0]?.content?.parts || [])
@@ -818,12 +819,21 @@ export async function askGemini(
 
       const functionResponseParts: any[] = [];
       for (const call of call1Res.functionCalls) {
-        const toolResult = await executeTool(
-          call.name,
-          call.args || {},
-          userId,
-          ctx
-        );
+        const cacheKey = call.name + ":" + JSON.stringify(call.args || {});
+        let toolResult: any;
+
+        if (toolResultCache.has(cacheKey)) {
+          toolResult = toolResultCache.get(cacheKey);
+        } else {
+          toolResult = await executeTool(
+            call.name,
+            call.args || {},
+            userId,
+            ctx
+          );
+          toolResultCache.set(cacheKey, toolResult);
+        }
+
         functionResponseParts.push({
           functionResponse: {
             name: call.name,
