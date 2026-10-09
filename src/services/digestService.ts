@@ -2,6 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { CONFIG } from "../config";
 import { db } from "../db";
+import { getModelCandidateChain } from "./ai";
 
 const agent = CONFIG.USE_PROXY ? new HttpsProxyAgent(CONFIG.PROXY_URL) : undefined;
 
@@ -118,7 +119,7 @@ export async function generateChatDigest(
 متن گفتگو:
 ${transcript}`;
 
-  const fastModels = ["gemini-3.7-flash"];
+  const fastModels = getModelCandidateChain();
 
   for (const model of fastModels) {
     try {
