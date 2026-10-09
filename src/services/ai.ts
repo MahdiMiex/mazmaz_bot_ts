@@ -189,6 +189,64 @@ export function isSensitiveExfiltrationAttempt(text: string): boolean {
   return leakPatterns.some((pattern) => pattern.test(lower));
 }
 
+export const READ_ONLY_TOOLS = new Set<string>([
+  "web_search",
+  "get_weather",
+  "get_crypto_prices",
+  "query_benchmark",
+  "fetch_page",
+  "fetch_url",
+  "read_web_link",
+  "eval_math",
+  "generate_chat_digest",
+  "summarize_chat",
+  "fetch_web_page",
+  "take_web_screenshot",
+]);
+
+export function isSuccessfulToolResult(res: any): boolean {
+  if (res == null) return false;
+  if (typeof res === "object") {
+    return res.ok !== false && !res.error;
+  }
+  if (typeof res === "string") {
+    try {
+      const parsed = JSON.parse(res);
+      if (typeof parsed === "object" && parsed !== null) {
+        return parsed.ok !== false && !parsed.error;
+      }
+    } catch {
+      return true;
+    }
+  }
+  return true;
+}
+
+export async function executeToolWithTimeout(
+  name: string,
+  args: any,
+  userId: number,
+  ctx: any,
+  timeoutMs = 20000
+): Promise<any> {
+  let timer: any;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`Tool execution timed out after ${timeoutMs / 1000}s`));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([
+      executeTool(name, args, userId, ctx),
+      timeoutPromise,
+    ]);
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function askGemini(
   userId: number,
   prompt: string,
@@ -817,27 +875,99 @@ export async function askGemini(
       const secondContents = JSON.parse(JSON.stringify(workingContents));
       secondContents.push(call1Res.candidates[0].content);
 
-      const functionResponseParts: any[] = [];
-      for (const call of call1Res.functionCalls) {
-        const cacheKey = call.name + ":" + JSON.stringify(call.args || {});
-        let toolResult: any;
+      const calls: any[] = call1Res.functionCalls;
+      const toolResults: any[] = new Array(calls.length);
 
-        if (toolResultCache.has(cacheKey)) {
-          toolResult = toolResultCache.get(cacheKey);
+      interface CallItem {
+        index: number;
+        call: any;
+      }
+
+      const readOnlyBatch: CallItem[] = [];
+      const mutatingBatch: CallItem[] = [];
+
+      for (let i = 0; i < calls.length; i++) {
+        const item: CallItem = { index: i, call: calls[i] };
+        if (READ_ONLY_TOOLS.has(calls[i].name)) {
+          readOnlyBatch.push(item);
         } else {
-          toolResult = await executeTool(
+          mutatingBatch.push(item);
+        }
+      }
+
+      // Step A: Run read-only batch concurrently with Promise.allSettled and per-tool timeout (20s)
+      if (readOnlyBatch.length > 0) {
+        await Promise.allSettled(
+          readOnlyBatch.map(async ({ index, call }) => {
+            const cacheKey = `${call.name}:${JSON.stringify(call.args || {})}`;
+            if (toolResultCache.has(cacheKey)) {
+              toolResults[index] = toolResultCache.get(cacheKey);
+              return;
+            }
+
+            try {
+              const res = await executeToolWithTimeout(
+                call.name,
+                call.args || {},
+                userId,
+                ctx,
+                20000
+              );
+              toolResults[index] = res;
+              if (isSuccessfulToolResult(res)) {
+                toolResultCache.set(cacheKey, res);
+              }
+            } catch (err: any) {
+              toolResults[index] = {
+                ok: false,
+                error: "Tool execution failed or timed out",
+              };
+            }
+          })
+        );
+      }
+
+      // Step B: Run mutating/admin tools SEQUENTIALLY, in model's original order, AFTER read-only batch
+      for (const { index, call } of mutatingBatch) {
+        const cacheKey = `${call.name}:${JSON.stringify(call.args || {})}`;
+        if (toolResultCache.has(cacheKey)) {
+          toolResults[index] = toolResultCache.get(cacheKey);
+          continue;
+        }
+
+        try {
+          const res = await executeToolWithTimeout(
             call.name,
             call.args || {},
             userId,
-            ctx
+            ctx,
+            20000
           );
-          toolResultCache.set(cacheKey, toolResult);
+          toolResults[index] = res;
+          if (isSuccessfulToolResult(res)) {
+            toolResultCache.set(cacheKey, res);
+          }
+        } catch (err: any) {
+          toolResults[index] = {
+            ok: false,
+            error: "Tool execution failed or timed out",
+          };
         }
+      }
+
+      // Step C: Assemble ALL functionResponse parts in ONE user message, in EXACT model order
+      const functionResponseParts: any[] = [];
+      for (let i = 0; i < calls.length; i++) {
+        const call = calls[i];
+        const res =
+          toolResults[i] !== undefined
+            ? toolResults[i]
+            : { ok: false, error: "Tool execution failed or timed out" };
 
         functionResponseParts.push({
           functionResponse: {
             name: call.name,
-            response: { output: toolResult },
+            response: { output: res },
           },
         });
       }
