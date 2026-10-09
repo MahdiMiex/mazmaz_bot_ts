@@ -62,6 +62,7 @@ import {
   testGeminiKey,
   clearUserHistory,
   getResolvedActiveModel,
+  isDeadModel,
   checkAvailableGeminiModels,
 } from "./services/ai";
 import { fetchAndAnalyzeLink } from "./services/linkReader";
