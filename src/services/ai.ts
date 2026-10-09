@@ -710,21 +710,33 @@ export async function askGemini(
       });
 
     let modelSucceeded = false;
+    let activeModelName = "";
+
+    const extractPartsText = (res: any) =>
+      (res?.candidates?.[0]?.content?.parts || [])
+        .filter((part: any) => typeof part?.text === "string" && part?.thought !== true)
+        .map((part: any) => part.text)
+        .join("")
+        .trim();
 
     for (const m of modelCandidates) {
       if (modelSucceeded) break;
 
-      const maxRetries = 3;
-      let attempt = 0;
+      activeModelName = m;
+      const workingContents = JSON.parse(JSON.stringify(contents));
 
-      while (attempt < maxRetries) {
-        attempt++;
+      // --- 1. First generateContent call (tools enabled, retry on 503/500 only) ---
+      let call1Res: any = null;
+      let call1Attempt = 0;
+      let keysTriedCall1 = 0;
+
+      while (call1Attempt < 3) {
+        call1Attempt++;
         const currentKey = keyPool[currentKeyIdx % keyPool.length] || apiKey;
         const currentAi = getAiClient(currentKey);
-        const workingContents = JSON.parse(JSON.stringify(contents));
 
         try {
-          let callRes = await currentAi.models.generateContent({
+          call1Res = await currentAi.models.generateContent({
             model: m,
             contents: workingContents,
             config: {
@@ -733,51 +745,7 @@ export async function askGemini(
               tools,
             },
           });
-
-          // اجرای ابزارها (Function Calling) و سپس گرفتن پاسخ متنی نهایی
-          if (callRes?.functionCalls && callRes.functionCalls.length > 0) {
-            workingContents.push(callRes.candidates[0].content);
-
-            for (const call of callRes.functionCalls) {
-              const toolResult = await executeTool(
-                call.name,
-                call.args || {},
-                userId,
-                ctx
-              );
-
-              workingContents.push({
-                role: "user",
-                parts: [
-                  {
-                    functionResponse: {
-                      name: call.name,
-                      response: { output: toolResult },
-                    },
-                  },
-                ],
-              });
-            }
-
-            // بعد از دریافت نتیجه ابزار، Gemini باید پاسخ نهایی متنی بدهد
-            callRes = await currentAi.models.generateContent({
-              model: m,
-              contents: workingContents,
-              config: {
-                systemInstruction,
-                temperature: 0.6,
-                toolConfig: {
-                  functionCallingConfig: {
-                    mode: "NONE",
-                  },
-                },
-              },
-            });
-          }
-
-          response = callRes;
-          modelSucceeded = true;
-          break;
+          break; // Call 1 succeeded
         } catch (err: any) {
           lastErr = err;
           const status =
@@ -797,36 +765,185 @@ export async function askGemini(
             break;
           }
 
-          // Rate limit (429): rotate to next key if multiple keys configured
+          // Rate limit (429): rotate key if possible, do NOT retry same model if no other key
           if (status === 429) {
             markKeyCooldown(currentKey, 60000);
-            if (keyPool.length > 1) {
+            keysTriedCall1++;
+            if (keysTriedCall1 < keyPool.length && keyPool.length > 1) {
               currentKeyIdx = (currentKeyIdx + 1) % keyPool.length;
-              console.warn(`[GEMINI ROTATE] Model ${m} hit 429. Rotating to next key (pool size: ${keyPool.length})...`);
-              continue;
-            }
-          }
-
-          // Server errors (503, 500) or rate limits (429): retry same model with backoff + jitter
-          if (status === 503 || status === 500 || status === 429) {
-            if (attempt < maxRetries) {
-              const baseDelay = attempt === 1 ? 1000 : attempt === 2 ? 2000 : 4000;
-              const jitter = Math.floor(Math.random() * 300);
-              const totalDelay = baseDelay + jitter;
-              console.warn(`[GEMINI RETRY] Model ${m} failed with status ${status} (attempt ${attempt}/${maxRetries}). Retrying in ${totalDelay}ms...`);
-              await new Promise((r) => setTimeout(r, totalDelay));
+              console.warn(`[GEMINI ROTATE] Model ${m} hit 429 on call 1. Rotating to next key (${keysTriedCall1 + 1}/${keyPool.length})...`);
+              call1Attempt--; // don't count key rotation as 503/500 attempt
               continue;
             } else {
-              console.warn(`[GEMINI FALLBACK] Model ${m} failed after ${maxRetries} attempts (${status}), switching to next candidate...`);
+              console.warn(`[GEMINI SKIP] Model ${m} hit 429 on call 1 and no more keys available. Skipping candidate...`);
               break;
             }
           }
 
-          // Any other error: skip to next candidate
-          console.warn(`[GEMINI FALLBACK] Model ${m} failed (${err?.message || err}), switching to next candidate...`);
+          // Server errors (503, 500): retry same model with exponential backoff + jitter
+          if (status === 503 || status === 500) {
+            if (call1Attempt < 3) {
+              const baseDelay = call1Attempt === 1 ? 1000 : 2000;
+              const jitter = Math.floor(Math.random() * 300);
+              const totalDelay = baseDelay + jitter;
+              console.warn(`[GEMINI RETRY] Model ${m} call 1 failed with status ${status} (attempt ${call1Attempt}/3). Retrying in ${totalDelay}ms...`);
+              await new Promise((r) => setTimeout(r, totalDelay));
+              continue;
+            } else {
+              console.warn(`[GEMINI FALLBACK] Model ${m} call 1 failed after 3 attempts (${status}), switching candidate...`);
+              break;
+            }
+          }
+
+          // Any other error: skip candidate immediately
+          console.warn(`[GEMINI FALLBACK] Model ${m} call 1 failed (${err?.message || err}), switching candidate...`);
           break;
         }
       }
+
+      if (!call1Res) {
+        continue;
+      }
+
+      // If no tool execution needed, Call 1 is the final response
+      if (!call1Res.functionCalls || call1Res.functionCalls.length === 0) {
+        response = call1Res;
+        modelSucceeded = true;
+        break;
+      }
+
+      // --- 2. Execute tools exactly ONCE outside the retry loop ---
+      const secondContents = JSON.parse(JSON.stringify(workingContents));
+      secondContents.push(call1Res.candidates[0].content);
+
+      const functionResponseParts: any[] = [];
+      for (const call of call1Res.functionCalls) {
+        const toolResult = await executeTool(
+          call.name,
+          call.args || {},
+          userId,
+          ctx
+        );
+        functionResponseParts.push({
+          functionResponse: {
+            name: call.name,
+            response: { output: toolResult },
+          },
+        });
+      }
+
+      // Send ALL functionResponse parts in ONE user message, in the same order as functionCalls
+      secondContents.push({
+        role: "user",
+        parts: functionResponseParts,
+      });
+
+      // --- 3. Second generateContent call (tools passed, mode = "NONE", retry with saved results) ---
+      const secondCallConfig = {
+        systemInstruction,
+        temperature: activeTemperature,
+        tools,
+        toolConfig: {
+          functionCallingConfig: {
+            mode: "NONE" as any,
+          },
+        },
+      };
+
+      let call2Res: any = null;
+      let call2Attempt = 0;
+      let keysTriedCall2 = 0;
+
+      while (call2Attempt < 3) {
+        call2Attempt++;
+        const currentKey = keyPool[currentKeyIdx % keyPool.length] || apiKey;
+        const currentAi = getAiClient(currentKey);
+
+        try {
+          call2Res = await currentAi.models.generateContent({
+            model: m,
+            contents: secondContents,
+            config: secondCallConfig,
+          });
+          break; // Call 2 succeeded
+        } catch (err: any) {
+          lastErr = err;
+          const status =
+            err?.status ||
+            err?.error?.code ||
+            (String(err?.message || "").includes("503")
+              ? 503
+              : String(err?.message || "").includes("429")
+              ? 429
+              : String(err?.message || "").includes("404")
+              ? 404
+              : 0);
+
+          if (status === 400 || status === 401 || status === 403 || status === 404) {
+            console.warn(`[GEMINI SKIP] Model ${m} returned status ${status} on call 2. Skipping...`);
+            break;
+          }
+
+          if (status === 429) {
+            markKeyCooldown(currentKey, 60000);
+            keysTriedCall2++;
+            if (keysTriedCall2 < keyPool.length && keyPool.length > 1) {
+              currentKeyIdx = (currentKeyIdx + 1) % keyPool.length;
+              console.warn(`[GEMINI ROTATE] Model ${m} hit 429 on call 2. Rotating key (${keysTriedCall2 + 1}/${keyPool.length})...`);
+              call2Attempt--;
+              continue;
+            } else {
+              console.warn(`[GEMINI SKIP] Model ${m} hit 429 on call 2 and no more keys. Skipping candidate...`);
+              break;
+            }
+          }
+
+          if (status === 503 || status === 500) {
+            if (call2Attempt < 3) {
+              const baseDelay = call2Attempt === 1 ? 1000 : 2000;
+              const jitter = Math.floor(Math.random() * 300);
+              const totalDelay = baseDelay + jitter;
+              console.warn(`[GEMINI RETRY] Model ${m} call 2 failed with status ${status} (attempt ${call2Attempt}/3). Retrying in ${totalDelay}ms...`);
+              await new Promise((r) => setTimeout(r, totalDelay));
+              continue;
+            } else {
+              console.warn(`[GEMINI FALLBACK] Model ${m} call 2 failed after 3 attempts (${status}), switching candidate...`);
+              break;
+            }
+          }
+
+          console.warn(`[GEMINI FALLBACK] Model ${m} call 2 failed (${err?.message || err}), switching candidate...`);
+          break;
+        }
+      }
+
+      if (!call2Res) {
+        continue;
+      }
+
+      // Check if reply is empty after second call, retry that second call once before fallback
+      let call2Text = extractPartsText(call2Res);
+      if (!call2Text) {
+        console.warn(`[GEMINI RETRY] Reply empty after second call on model ${m}. Retrying second call once...`);
+        try {
+          const currentKey = keyPool[currentKeyIdx % keyPool.length] || apiKey;
+          const currentAi = getAiClient(currentKey);
+          const retryRes = await currentAi.models.generateContent({
+            model: m,
+            contents: secondContents,
+            config: secondCallConfig,
+          });
+          if (retryRes) {
+            call2Res = retryRes;
+          }
+        } catch (retryErr: any) {
+          console.warn(`[GEMINI] Retry of second call failed:`, retryErr?.message || retryErr);
+        }
+      }
+
+      response = call2Res;
+      modelSucceeded = true;
+      break;
     }
 
     if (!response) {
@@ -834,19 +951,24 @@ export async function askGemini(
       return "سرور هوش مصنوعی در حال حاضر شلوغ است، لطفاً یک دقیقه دیگر تلاش کنید ⏳";
     }
 
-    // استخراج امن متن؛ response.text ممکن است به خاطر وجود functionCall/non-text parts خطا بدهد.
-    let reply = "";
+    const cand0 = response?.candidates?.[0];
+    const parts = cand0?.content?.parts || [];
+    const partKinds = parts.map((part: any) => {
+      if (part?.thought === true) return "thought";
+      if (typeof part?.text === "string") return "text";
+      if (part?.functionCall) return "functionCall";
+      return "other";
+    });
 
-    try {
-      const parts = response?.candidates?.[0]?.content?.parts || [];
-      reply = parts
-        .filter((part: any) => typeof part?.text === "string")
-        .map((part: any) => part.text)
-        .join("")
-        .trim();
-    } catch (e) {
-      console.warn("[GEMINI] Failed to extract response text:", e);
-    }
+    console.warn(
+      `[GEMINI METRICS] Model: ${activeModelName}, finishReason: ${cand0?.finishReason || "UNKNOWN"}, parts: [${partKinds.join(", ")}], usageMetadata: ${JSON.stringify(response?.usageMetadata || {})}${response?.promptFeedback ? `, promptFeedback: ${JSON.stringify(response.promptFeedback)}` : ""}`
+    );
+
+    let reply = parts
+      .filter((part: any) => typeof part?.text === "string" && part?.thought !== true)
+      .map((part: any) => part.text)
+      .join("")
+      .trim();
 
     if (!reply) {
       reply = "هوم؟ جوابم وسط راه گم شد 😅 یه بار دیگه بفرست.";
