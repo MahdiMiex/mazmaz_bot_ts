@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["bun", "sqlite", "ffmpeg", "python3", "yt-dlp", "curl", "ca-certificates"]
+
+[phases.install]
+cmds = ["bun install --frozen-lockfile || bun install"]
+
+[start]
+cmd = "bun run src/index.ts"
