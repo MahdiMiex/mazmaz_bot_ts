@@ -64,6 +64,10 @@ import {
   getResolvedActiveModel,
   isDeadModel,
   checkAvailableGeminiModels,
+  getActivePowerLevel,
+  getThinkingBudget,
+  type PowerLevel,
+  type ModelResolution,
 } from "./services/ai";
 import { fetchAndAnalyzeLink } from "./services/linkReader";
 import { setupTrackingMiddleware } from "./tools/adminTools";
@@ -77,8 +81,9 @@ if (!CONFIG.BOT_TOKEN) {
   process.exit(1);
 }
 
-// Auto-migrate legacy slow models to ultra-fast default
-if (getSetting("ai_model") === "gemini-3.7-flash" || getSetting("ai_model") === "gemini-3.8-flash") {
+// Clean up any legacy dead models in stored settings
+const storedStartupModel = getSetting("ai_model");
+if (storedStartupModel && isDeadModel(storedStartupModel)) {
   deleteSetting("ai_model");
 }
 
@@ -339,101 +344,228 @@ bot.command(["history", "history@mazmazAgentBot"], async (ctx) => {
   }
 });
 
-export const MODEL_TIERS: Record<string, { label: string; desc: string; icon: string; speed: string }> = {
-  "gemini-3.5-flash-lite": { label: "سرعتی (Low)", desc: "پاسخ فوری و پرسرعت برای چت و کارهای عمومی", icon: "⚡", speed: "زیر ۱ ثانیه (~700ms)" },
-  "gemini-3.5-flash": { label: "متعادل (Medium)", desc: "کیفیت بالا، سرچ وب و تحلیل متون", icon: "⚖️", speed: "۲ الی ۳ ثانیه" },
-  "gemini-3.7-flash": { label: "استدلال عمیق (High)", desc: "استدلال مرحله‌ای، ریاضی و منطق فکری", icon: "🧠", speed: "۱۰ الی ۲۰ ثانیه" },
-  "gemini-3.8-flash": { label: "بالاترین قدرت (Pro)", desc: "معماری نرم‌افزار، حل مسائل سخت و کدنویسی عمیق", icon: "👑", speed: "۲۰ الی ۴۰ ثانیه" },
+export const MODEL_DESCRIPTIONS: Record<string, { label: string; desc: string; icon: string }> = {
+  "gemini-3.7-flash": { label: "3.7 Flash", desc: "مدل پرچمدار، تفکر تطبیقی و استدلال عمیق", icon: "💎" },
+  "gemini-3.8-flash": { label: "3.8 Flash", desc: "جدیدترین مدل هوشمند با محاسبات پیشرفته", icon: "👑" },
+  "gemini-3.5-flash": { label: "3.5 Flash", desc: "مدل همه‌کاره با پشتیبانی قوی از ابزارها و وب", icon: "🌟" },
+  "gemini-3.5-flash-lite": { label: "3.5 Flash Lite", desc: "نسخه بسیار سبک، کم‌مصرف و سریع", icon: "⚡" },
+  "gemini-3.6-flash": { label: "3.6 Flash", desc: "مدل نسل ۳.۶ پایدار و پرسرعت", icon: "🚀" },
+  "gemini-flash-lite-latest": { label: "Flash Lite Latest", desc: "آخرین بیلد لایت با پینگ زیر ۱ ثانیه", icon: "🔥" },
+  "gemini-3.1-flash-lite": { label: "3.1 Flash Lite", desc: "نسخه بهینه‌شده فوق‌سبک", icon: "💡" },
 };
+
+export const POWER_LEVELS: Record<string, { label: string; desc: string; icon: string; budget: number; speed: string }> = {
+  low: {
+    label: "کم / سرعتی (Low)",
+    desc: "پاسخ فوری و آنی بدون تاخیر تفکر (بودجه تفکر ۰)",
+    icon: "⚡",
+    budget: 0,
+    speed: "زیر ۱ ثانیه (~700ms)",
+  },
+  medium: {
+    label: "متعادل (Medium)",
+    desc: "تفکر متعادل، تحلیل و کیفیت پاسخ بالا (بودجه تفکر ۲۰۴۸)",
+    icon: "⚖️",
+    budget: 2048,
+    speed: "۲ الی ۴ ثانیه",
+  },
+  high: {
+    label: "عمیق / تحلیلی (High)",
+    desc: "حداکثر قدرت استدلال، CoT و حل مسائل سخت (بودجه تفکر ۸۱۹۲)",
+    icon: "🧠",
+    budget: 8192,
+    speed: "۱۰ الی ۲۰ ثانیه",
+  },
+};
+
+export function buildModelAndPowerKeyboard(currentModel: string, currentPower: string): InlineKeyboard {
+  const kb = new InlineKeyboard();
+
+  // ۱. دکمه‌های انتخاب مدل (دو ستونه)
+  const models = CONFIG.ALLOWED_MODELS.filter((m) => !isDeadModel(m));
+  for (let i = 0; i < models.length; i += 2) {
+    const m1 = models[i];
+    const m2 = models[i + 1];
+
+    const info1 = MODEL_DESCRIPTIONS[m1] || { label: m1, icon: "🤖" };
+    const isCur1 = m1 === currentModel;
+    kb.text(`${isCur1 ? "🔘 " : ""}${info1.icon} ${info1.label}`, `set_model:${m1}`);
+
+    if (m2) {
+      const info2 = MODEL_DESCRIPTIONS[m2] || { label: m2, icon: "🤖" };
+      const isCur2 = m2 === currentModel;
+      kb.text(`${isCur2 ? "🔘 " : ""}${info2.icon} ${info2.label}`, `set_model:${m2}`);
+    }
+    kb.row();
+  }
+
+  // ۲. سطح قدرت تفکر مدل (Thinking Level)
+  kb.text("─── ⚡ سطح قدرت تفکر مدل (Thinking) ───", "noop_header").row();
+  for (const [pKey, pInfo] of Object.entries(POWER_LEVELS)) {
+    const isCurP = pKey === currentPower;
+    kb.text(`${isCurP ? "🔘 " : ""}${pInfo.icon} ${pInfo.label.split("(")[0].trim()}`, `set_power:${pKey}`);
+  }
+  kb.row();
+
+  // ۳. بازنشانی به پیش‌فرض
+  kb.text("🔄 بازنشانی به پیش‌فرض (Reset)", "reset_model_override");
+
+  return kb;
+}
+
+export function renderModelDashboardText(resolved: ModelResolution, power: string): string {
+  const modelInfo = MODEL_DESCRIPTIONS[resolved.model] || { label: resolved.model, desc: "مدل سفارشی", icon: "🤖" };
+  const powerInfo = POWER_LEVELS[power] || POWER_LEVELS.low;
+
+  return (
+    `🧠 <b>داشبورد انتخاب مدل و سطح قدرت تفکر هوش مصنوعی:</b>\n\n` +
+    `• <b>مدل فعال:</b> ${modelInfo.icon} <code>${resolved.model}</code>\n` +
+    `  ↳ <i>${modelInfo.desc}</i>\n` +
+    `• <b>میزان تفکر و استدلال (Thinking):</b> ${powerInfo.icon} <b>${powerInfo.label}</b>\n` +
+    `  ↳ <i>${powerInfo.desc}</i>\n` +
+    `• <b>سرعت تخمینی پاسخ:</b> <code>${powerInfo.speed}</code>\n` +
+    `• <b>منبع تعیین مدل:</b> <b>${resolved.source}</b>\n\n` +
+    `💡 <i>می‌توانید مدل مورد نظر و میزان قدرت تفکر (Low / Medium / High) آن را از دکمه‌های زیر انتخاب کنید:</i>`
+  );
+}
+
+export function matchModelName(input: string): string | null {
+  const clean = input.trim().toLowerCase();
+  for (const m of CONFIG.ALLOWED_MODELS) {
+    if (m.toLowerCase() === clean) return m;
+  }
+  if (clean === "3.7" || clean === "3.7-flash" || clean === "flash-3.7") return "gemini-3.7-flash";
+  if (clean === "3.8" || clean === "3.8-flash" || clean === "flash-3.8") return "gemini-3.8-flash";
+  if (clean === "3.5" || clean === "3.5-flash" || clean === "flash-3.5") return "gemini-3.5-flash";
+  if (clean === "3.5-lite" || clean === "lite" || clean === "flash-lite") return "gemini-3.5-flash-lite";
+  if (clean === "3.6" || clean === "3.6-flash") return "gemini-3.6-flash";
+  if (clean === "latest" || clean === "lite-latest") return "gemini-flash-lite-latest";
+  if (clean === "3.1" || clean === "3.1-lite") return "gemini-3.1-flash-lite";
+  return null;
+}
 
 // 1.3 دستور مشاهده و تغییر مدل هوش مصنوعی (/model)
 bot.command(["model", "model@mazmazAgentBot"], async (ctx) => {
   const fromId = ctx.from?.id;
   if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) {
-    // Silently ignore non-admins
     return;
   }
 
   const rawArg = ctx.message?.text?.replace(/^\/model(@\w+)?/i, "").trim() || "";
   const resolved = getResolvedActiveModel();
+  const currentPower = getActivePowerLevel();
 
-  // الف: بازنشانی مدل و حذف stored override
+  // الف: بازنشانی تنظیمات
   if (rawArg.toLowerCase() === "reset") {
     const oldModel = resolved.model;
     deleteSetting("ai_model");
+    deleteSetting("ai_power_level");
     const newRes = getResolvedActiveModel();
-    const currentTier = MODEL_TIERS[newRes.model];
+    const newPower = getActivePowerLevel();
     console.log(`[ADMIN MODEL RESET] Admin ${fromId} reset model override at ${new Date().toISOString()} (was: ${oldModel}, now: ${newRes.model} from ${newRes.source})`);
     return ctx.reply(
-      `🔄 <b>تنظیم مدل هوش مصنوعی ریست شد:</b>\n\n` +
-      `• مدل فعال جدید: <code>${newRes.model}</code> ${currentTier ? `(${currentTier.icon} ${currentTier.label})` : ""}\n` +
-      `• سرعت تخمینی: <code>${currentTier?.speed || "متغیر"}</code>\n` +
-      `• منبع تعیین: <b>${newRes.source}</b>\n\n` +
-      `سیستم به مدل پیش‌فرض فوق‌سریع بازگشت.`,
+      `🔄 <b>تنظیمات مدل و قدرت تفکر به حالت پیش‌فرض بازگشت:</b>\n\n` +
+      `• مدل فعال جدید: <code>${newRes.model}</code>\n` +
+      `• سطح تفکر: <code>${newPower}</code>\n` +
+      `• منبع تعیین: <b>${newRes.source}</b>`,
       { parse_mode: "HTML" }
     );
   }
 
-  // ب: تغییر مدل با ارسال آرگومان یا شورت‌کات (low, med, high, pro)
+  // ب: ارسال آرگومان (مثلاً /model gemini-3.7-flash low یا /model 3.7 high یا /model med)
   if (rawArg) {
-    const argLower = rawArg.toLowerCase();
-    let targetModel = rawArg;
-    if (argLower === "low" || argLower === "lite" || argLower === "turbo" || argLower === "1") targetModel = "gemini-3.5-flash-lite";
-    else if (argLower === "med" || argLower === "medium" || argLower === "normal" || argLower === "2") targetModel = "gemini-3.5-flash";
-    else if (argLower === "high" || argLower === "think" || argLower === "deep" || argLower === "3") targetModel = "gemini-3.7-flash";
-    else if (argLower === "pro" || argLower === "max" || argLower === "4") targetModel = "gemini-3.8-flash";
+    const parts = rawArg.split(/\s+/).filter(Boolean);
+    let matchedModel: string | null = null;
+    let matchedPower: string | null = null;
 
-    if (CONFIG.ALLOWED_MODELS.includes(targetModel) && !isDeadModel(targetModel)) {
-      const oldModel = resolved.model;
-      setSetting("ai_model", targetModel);
-      const tierInfo = MODEL_TIERS[targetModel];
-      const tierText = tierInfo ? `\n• سطح کاری: ${tierInfo.icon} <b>${tierInfo.label}</b>\n• سرعت تخمینی: <code>${tierInfo.speed}</code>` : "";
-      console.log(`[ADMIN MODEL CHANGE] Admin ${fromId} changed model from ${oldModel} to ${targetModel} at ${new Date().toISOString()}`);
+    for (const p of parts) {
+      const pLower = p.toLowerCase();
+      if (pLower === "low" || pLower === "lite" || pLower === "turbo" || pLower === "1") {
+        matchedPower = "low";
+      } else if (pLower === "med" || pLower === "medium" || pLower === "normal" || pLower === "2") {
+        matchedPower = "medium";
+      } else if (pLower === "high" || pLower === "deep" || pLower === "pro" || pLower === "3") {
+        matchedPower = "high";
+      } else {
+        const candidateModel = matchModelName(p);
+        if (candidateModel) {
+          matchedModel = candidateModel;
+        }
+      }
+    }
+
+    if (matchedModel || matchedPower) {
+      if (matchedModel) {
+        setSetting("ai_model", matchedModel);
+      }
+      if (matchedPower) {
+        setSetting("ai_power_level", matchedPower);
+      }
+      const updatedRes = getResolvedActiveModel();
+      const updatedPower = getActivePowerLevel();
+      const pInfo = POWER_LEVELS[updatedPower];
+      const mInfo = MODEL_DESCRIPTIONS[updatedRes.model] || { label: updatedRes.model, icon: "🤖" };
+
+      console.log(`[ADMIN MODEL CHANGE] Admin ${fromId} set model to ${updatedRes.model} and power to ${updatedPower}`);
       return ctx.reply(
-        `✅ <b>سطح و مدل هوش مصنوعی با موفقیت تنظیم شد:</b>\n\n` +
-        `• مدل فعال: <code>${targetModel}</code>${tierText}\n` +
-        `• مدل قبلی: <code>${oldModel}</code>\n` +
-        `• منبع: <b>stored override</b>`,
+        `✅ <b>تنظیمات هوش مصنوعی با موفقیت به‌روز شد:</b>\n\n` +
+        `• <b>مدل فعال:</b> ${mInfo.icon} <code>${updatedRes.model}</code>\n` +
+        `• <b>سطح تفکر:</b> ${pInfo.icon} <b>${pInfo.label}</b>\n` +
+        `• <b>سرعت تخمینی:</b> <code>${pInfo.speed}</code>\n` +
+        `• <b>منبع:</b> <b>stored override</b>`,
         { parse_mode: "HTML" }
       );
     } else {
       return ctx.reply(
-        `❌ <b>مدل انتخابی معتبر نیست!</b>\n\n` +
-        `💡 <b>شورت‌کات‌های سریع:</b>\n` +
-        `• <code>/model low</code> (حالت فوق‌سریع - زیر ۱ ثانیه ⚡)\n` +
-        `• <code>/model med</code> (حالت متعادل و باهوش ⚖️)\n` +
-        `• <code>/model high</code> (حالت استدلال و تحلیل عمیق 🧠)\n` +
-        `• <code>/model pro</code> (بالاترین قدرت محاسبات 👑)\n` +
+        `❌ <b>دستور یا نام مدل نامعتبر است!</b>\n\n` +
+        `💡 <b>مثال‌های استفاده:</b>\n` +
+        `• <code>/model 3.7 low</code> (مدل ۳.۷ با پاسخ فوری ⚡)\n` +
+        `• <code>/model 3.7 high</code> (مدل ۳.۷ با استدلال عمیق 🧠)\n` +
+        `• <code>/model low</code> یا <code>/model med</code> یا <code>/model high</code>\n` +
         `• <code>/model reset</code> (بازگشت به پیش‌فرض)`,
         { parse_mode: "HTML" }
       );
     }
   }
 
-  // ج: بدون آرگومان: نمایش وضعیت جاری و دکمه‌های ۳ سطحی
-  const kb = new InlineKeyboard();
-  for (const [mKey, tier] of Object.entries(MODEL_TIERS)) {
-    const isCurrent = mKey === resolved.model;
-    kb.text(`${isCurrent ? "🔘 " : ""}${tier.icon} ${tier.label}`, `set_model:${mKey}`).row();
+  // ج: بدون آرگومان -> نمایش داشبورد تعاملی کامل با دکمه‌ها
+  const kb = buildModelAndPowerKeyboard(resolved.model, currentPower);
+  const text = renderModelDashboardText(resolved, currentPower);
+  await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });
+});
+
+// 1.3.1 دستور اختصاصی تنظیم سطح قدرت تفکر و استدلال (/power یا /thinking)
+bot.command(["power", "power@mazmazAgentBot", "thinking", "reasoning"], async (ctx) => {
+  const fromId = ctx.from?.id;
+  if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) return;
+
+  const rawArg = ctx.message?.text?.replace(/^\/(power|thinking|reasoning)(@\w+)?/i, "").trim().toLowerCase() || "";
+  if (rawArg === "low" || rawArg === "lite" || rawArg === "turbo" || rawArg === "1") {
+    setSetting("ai_power_level", "low");
+    return ctx.reply(`✅ سطح قدرت تفکر روی ⚡ <b>Low (کم / فوق‌سریع)</b> تنظیم شد.`, { parse_mode: "HTML" });
   }
-  kb.text("🔄 بازنشانی به پیش‌فرض (Reset)", "reset_model_override").row();
+  if (rawArg === "med" || rawArg === "medium" || rawArg === "normal" || rawArg === "2") {
+    setSetting("ai_power_level", "medium");
+    return ctx.reply(`✅ سطح قدرت تفکر روی ⚖️ <b>Medium (متعادل)</b> تنظیم شد.`, { parse_mode: "HTML" });
+  }
+  if (rawArg === "high" || rawArg === "deep" || rawArg === "pro" || rawArg === "3") {
+    setSetting("ai_power_level", "high");
+    return ctx.reply(`✅ سطح قدرت تفکر روی 🧠 <b>High (عمیق و تحلیلی)</b> تنظیم شد.`, { parse_mode: "HTML" });
+  }
 
-  const currentTier = MODEL_TIERS[resolved.model];
-  const tierDisplay = currentTier ? `${currentTier.icon} <b>${currentTier.label}</b>` : "سفارشی";
-  const speedDisplay = currentTier ? `<code>${currentTier.speed}</code>` : "متغیر";
+  const currentPower = getActivePowerLevel();
+  const kb = new InlineKeyboard()
+    .text(`${currentPower === "low" ? "🔘 " : ""}⚡ Low (فوق‌سریع - بودجه ۰)`, "set_power:low").row()
+    .text(`${currentPower === "medium" ? "🔘 " : ""}⚖️ Medium (متعادل - بودجه ۲۰۴۸)`, "set_power:medium").row()
+    .text(`${currentPower === "high" ? "🔘 " : ""}🧠 High (عمیق - بودجه ۸۱۹۲)`, "set_power:high");
 
+  const pInfo = POWER_LEVELS[currentPower];
   await ctx.reply(
-    `🧠 <b>تنظیم و انتخاب سطح مدل هوش مصنوعی:</b>\n\n` +
-    `• مدل فعال فعلی: <code>${resolved.model}</code>\n` +
-    `• سطح کاری: ${tierDisplay}\n` +
-    `• سرعت پاسخگویی: ${speedDisplay}\n` +
-    `• منبع مقدار: <b>${resolved.source}</b>\n\n` +
-    `📊 <b>راهنمای سطوح مختلف:</b>\n` +
-    `⚡ <b>Low (سرعتی):</b> <code>gemini-3.5-flash-lite</code> — زیر ۱ ثانیه\n` +
-    `⚖️ <b>Medium (متعادل):</b> <code>gemini-3.5-flash</code> — ۲ الی ۳ ثانیه\n` +
-    `🧠 <b>High (استدلال عمیق):</b> <code>gemini-3.7-flash</code> — تحلیل منطقی\n` +
-    `👑 <b>Pro (حرفه‌ای):</b> <code>gemini-3.8-flash</code> — کدنویسی و محاسبات سنگین\n\n` +
-    `سطح مورد نظر خود را از دکمه‌های زیر انتخاب کنید:`,
+    `⚡ <b>تنظیم میزان قدرت تفکر و استدلال (Thinking Level):</b>\n\n` +
+    `• سطح فعلی: ${pInfo.icon} <b>${pInfo.label}</b>\n` +
+    `• سرعت تخمینی: <code>${pInfo.speed}</code>\n` +
+    `• توضیح: <i>${pInfo.desc}</i>\n\n` +
+    `سطح مورد نظر را انتخاب کنید:`,
     { reply_markup: kb, parse_mode: "HTML" }
   );
 });
@@ -519,23 +651,29 @@ bot.command(["system", "system@mazmazAgentBot", "prompt"], async (ctx) => {
 
 // 1.7 منوی تعاملی تنظیمات (/settings)
 bot.command(["settings", "settings@mazmazAgentBot"], async (ctx) => {
-  const model = getSetting("ai_model", CONFIG.AI_MODEL);
+  const resolved = getResolvedActiveModel();
+  const power = getActivePowerLevel();
   const temp = getSetting("ai_temperature", "0.7");
   const lang = getSetting("bot_language", "fa");
   const rulesCount = getApprovedRules().length;
 
+  const powerInfo = POWER_LEVELS[power] || POWER_LEVELS.low;
+  const modelInfo = MODEL_DESCRIPTIONS[resolved.model] || { label: resolved.model, icon: "🤖" };
+
   const kb = new InlineKeyboard()
     .text("🧠 تغییر مدل", "cmd_menu_model")
+    .text("⚡ قدرت تفکر", "cmd_menu_power")
+    .row()
     .text("🌡️ دمای خلاقیت", "cmd_menu_temp")
-    .row()
     .text("🌐 انتخاب زبان", "cmd_menu_lang")
-    .text("📋 قوانین حافظه", "cmd_menu_system")
     .row()
+    .text("📋 قوانین حافظه", "cmd_menu_system")
     .text("🧹 پاکسازی کانتکست چت", "act_clear");
 
   await ctx.reply(
     `🛠️ <b>داشبورد تنظیمات تعاملی ربات مزمز:</b>\n\n` +
-      `• <b>مدل هوش مصنوعی:</b> <code>${model}</code>\n` +
+      `• <b>مدل هوش مصنوعی:</b> ${modelInfo.icon} <code>${resolved.model}</code>\n` +
+      `• <b>سطح تفکر و استدلال:</b> ${powerInfo.icon} <b>${powerInfo.label}</b>\n` +
       `• <b>دمای خلاقیت:</b> <code>${temp}</code>\n` +
       `• <b>زبان پاسخگویی:</b> <code>${lang === "fa" ? "فارسی 🇮🇷" : "English 🇬🇧"}</code>\n` +
       `• <b>قوانین حافظه زنده:</b> <code>${rulesCount} قانون فعال</code>\n\n` +
@@ -1171,7 +1309,7 @@ bot.callbackQuery("act_clear", async (ctx) => {
 });
 
 // دکمه‌های منوی تنظیمات
-// دکمه‌های منوی تنظیمات مدل و دما
+// دکمه‌های منوی تنظیمات مدل، سطح قدرت تفکر و دما
 bot.callbackQuery(/^set_model:(.+)$/, async (ctx) => {
   const fromId = ctx.from?.id;
   if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) {
@@ -1183,16 +1321,34 @@ bot.callbackQuery(/^set_model:(.+)$/, async (ctx) => {
   }
   const oldModel = getResolvedActiveModel().model;
   setSetting("ai_model", newModel);
-  const tierInfo = MODEL_TIERS[newModel];
-  const tierText = tierInfo ? ` (${tierInfo.icon} ${tierInfo.label})` : "";
+  const updatedRes = getResolvedActiveModel();
+  const currentPower = getActivePowerLevel();
+  const mInfo = MODEL_DESCRIPTIONS[newModel] || { label: newModel, icon: "🤖" };
   console.log(`[ADMIN MODEL CHANGE] Admin ${fromId} changed model from ${oldModel} to ${newModel} at ${new Date().toISOString()}`);
-  await ctx.editMessageText(
-    `✅ <b>سطح و مدل فعال هوش مصنوعی به <code>${newModel}</code>${tierText} تغییر یافت.</b>\n` +
-    `• سرعت تخمینی: <code>${tierInfo?.speed || "متغیر"}</code>\n` +
-    `• منبع: <b>stored override</b>`,
-    { parse_mode: "HTML" }
-  ).catch(() => {});
-  await ctx.answerCallbackQuery({ text: `سطح به ${tierInfo?.label || newModel} تغییر یافت.` });
+
+  const kb = buildModelAndPowerKeyboard(updatedRes.model, currentPower);
+  const text = renderModelDashboardText(updatedRes, currentPower);
+
+  await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: `مدل فعال به ${mInfo.label} تغییر یافت.` });
+});
+
+bot.callbackQuery(/^set_power:(low|medium|high)$/, async (ctx) => {
+  const fromId = ctx.from?.id;
+  if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) {
+    return ctx.answerCallbackQuery({ text: "تنظیم سطح تفکر فقط توسط ادمین امکان‌پذیر است.", show_alert: true });
+  }
+  const newPower = ctx.match[1].trim();
+  setSetting("ai_power_level", newPower);
+  const updatedRes = getResolvedActiveModel();
+  const pInfo = POWER_LEVELS[newPower] || POWER_LEVELS.low;
+  console.log(`[ADMIN POWER CHANGE] Admin ${fromId} changed power level to ${newPower} at ${new Date().toISOString()}`);
+
+  const kb = buildModelAndPowerKeyboard(updatedRes.model, newPower);
+  const text = renderModelDashboardText(updatedRes, newPower);
+
+  await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: `سطح تفکر به ${pInfo.label} تنظیم شد.` });
 });
 
 bot.callbackQuery("reset_model_override", async (ctx) => {
@@ -1200,17 +1356,20 @@ bot.callbackQuery("reset_model_override", async (ctx) => {
   if (!fromId || !CONFIG.ADMIN_IDS.includes(fromId)) return;
   const oldModel = getResolvedActiveModel().model;
   deleteSetting("ai_model");
+  deleteSetting("ai_power_level");
   const newRes = getResolvedActiveModel();
-  const tierInfo = MODEL_TIERS[newRes.model];
+  const newPower = getActivePowerLevel();
   console.log(`[ADMIN MODEL RESET] Admin ${fromId} reset model override at ${new Date().toISOString()} (was: ${oldModel}, now: ${newRes.model} from ${newRes.source})`);
-  await ctx.editMessageText(
-    `🔄 <b>اورراید مدل با موفقیت پاک شد و سیستم به حالت پیش‌فرض بازگشت:</b>\n\n` +
-    `• مدل فعال جدید: <code>${newRes.model}</code> ${tierInfo ? `(${tierInfo.icon} ${tierInfo.label})` : ""}\n` +
-    `• سرعت تخمینی: <code>${tierInfo?.speed || "متغیر"}</code>\n` +
-    `• منبع تعیین: <b>${newRes.source}</b>`,
-    { parse_mode: "HTML" }
-  ).catch(() => {});
-  await ctx.answerCallbackQuery({ text: "تنظیمات مدل به پیش‌فرض ریست شد." });
+
+  const kb = buildModelAndPowerKeyboard(newRes.model, newPower);
+  const text = renderModelDashboardText(newRes, newPower);
+
+  await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: "تنظیمات مدل و قدرت تفکر ریست شد." });
+});
+
+bot.callbackQuery("noop_header", async (ctx) => {
+  await ctx.answerCallbackQuery({ text: "از دکمه‌های زیر برای تعیین سطح قدرت تفکر مدل استفاده کنید." });
 });
 
 // B5: تایید یا رد پیشنهاد تغییر مدل توسط ابزار هوش مصنوعی
@@ -1267,26 +1426,32 @@ bot.callbackQuery("reset_sysprompt", async (ctx) => {
 
 bot.callbackQuery("cmd_menu_model", async (ctx) => {
   const resolved = getResolvedActiveModel();
-  const kb = new InlineKeyboard();
-  for (const [mKey, tier] of Object.entries(MODEL_TIERS)) {
-    const isCurrent = mKey === resolved.model;
-    kb.text(`${isCurrent ? "🔘 " : ""}${tier.icon} ${tier.label}`, `set_model:${mKey}`).row();
-  }
-  kb.text("🔄 بازنشانی به پیش‌فرض (Reset)", "reset_model_override").row();
+  const power = getActivePowerLevel();
+  const kb = buildModelAndPowerKeyboard(resolved.model, power);
+  const text = renderModelDashboardText(resolved, power);
 
-  const currentTier = MODEL_TIERS[resolved.model];
-  const tierDisplay = currentTier ? `${currentTier.icon} <b>${currentTier.label}</b>` : "سفارشی";
-  const speedDisplay = currentTier ? `<code>${currentTier.speed}</code>` : "متغیر";
+  await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" }).catch(() => {});
+  await ctx.answerCallbackQuery();
+});
 
+bot.callbackQuery("cmd_menu_power", async (ctx) => {
+  const currentPower = getActivePowerLevel();
+  const kb = new InlineKeyboard()
+    .text(`${currentPower === "low" ? "🔘 " : ""}⚡ Low (فوق‌سریع - بودجه ۰)`, "set_power:low").row()
+    .text(`${currentPower === "medium" ? "🔘 " : ""}⚖️ Medium (متعادل - بودجه ۲۰۴۸)`, "set_power:medium").row()
+    .text(`${currentPower === "high" ? "🔘 " : ""}🧠 High (عمیق - بودجه ۸۱۹۲)`, "set_power:high").row()
+    .text("🔙 بازگشت به داشبورد مدل", "cmd_menu_model");
+
+  const pInfo = POWER_LEVELS[currentPower];
   await ctx.editMessageText(
-    `🧠 <b>انتخاب سطح و مدل هوش مصنوعی:</b>\n\n` +
-    `• مدل فعال: <code>${resolved.model}</code>\n` +
-    `• سطح کاری فعلی: ${tierDisplay}\n` +
-    `• سرعت تخمینی: ${speedDisplay}\n` +
-    `• منبع: <b>${resolved.source}</b>\n\n` +
-    `یکی از سطوح زیر را بر اساس سرعت یا عمق مورد نظر انتخاب کنید:`,
+    `⚡ <b>تنظیم میزان قدرت تفکر و استدلال (Thinking Level):</b>\n\n` +
+    `• سطح فعلی: ${pInfo.icon} <b>${pInfo.label}</b>\n` +
+    `• سرعت تخمینی: <code>${pInfo.speed}</code>\n` +
+    `• توضیح: <i>${pInfo.desc}</i>\n\n` +
+    `سطح مورد نظر را انتخاب کنید:`,
     { reply_markup: kb, parse_mode: "HTML" }
-  );
+  ).catch(() => {});
+  await ctx.answerCallbackQuery();
 });
 
 bot.callbackQuery("cmd_menu_temp", async (ctx) => {
@@ -2000,16 +2165,16 @@ async function launchBotWithResilience() {
               // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه تاریخ، ساعت، کارهای جدید و رفع باگ‌ها
               await bot.api.sendMessage(
                 adminId,
-                `🚀 <b>آپدیت جدید مزمز: سیستم ۳ سطحی مدل‌ها (Low / Medium / High / Pro)!</b>\n\n` +
+                `🚀 <b>آپدیت جدید مزمز: پشتیبانی از تمام مدل‌ها + کنترل سطح تفکر (Low / Medium / High)!</b>\n\n` +
                 `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
-                `🛠️ <b>امکانات و تغییرات این نسخه:</b>\n` +
-                `• 🎚️ <b>سیستم سطوح چندگانه هوش مصنوعی (/model):</b>\n` +
-                `   ⚡ <b>Low (سرعتی):</b> <code>gemini-3.5-flash-lite</code> (پاسخ برق‌آسا زیر ۱ ثانیه)\n` +
-                `   ⚖️ <b>Medium (متعادل):</b> <code>gemini-3.5-flash</code> (هوشمند و روان ۲ الی ۳ ثانیه)\n` +
-                `   🧠 <b>High (استدلال عمیق):</b> <code>gemini-3.7-flash</code> (تحلیل منطقی و محاسباتی)\n` +
-                `   👑 <b>Pro (حرفه‌ای):</b> <code>gemini-3.8-flash</code> (معماری کد و مسائل سنگین)\n` +
-                `• ⚡ <b>شورت‌کات‌های دستوری جدید:</b> امکان سوییچ سریع با دستوراتی مثل <code>/model low</code> یا <code>/model high</code>.\n` +
-                `• 🔑 <b>پایداری کامل اتصال به گوگل کلود:</b> رفع ۱۰۰٪ لیمیت و پردازش همزمان بدون خطا.\n\n` +
+                `🛠️ <b>امکانات و بهبودهای این نسخه:</b>\n` +
+                `• 💎 <b>حفظ لیست کامل مدل‌های هوش مصنوعی:</b> دسترسی آزاد به تمامی مدل‌های <code>gemini-3.7-flash</code>, <code>gemini-3.8-flash</code>, <code>gemini-3.5-flash</code>, <code>gemini-3.5-flash-lite</code> و...\n` +
+                `• ⚡ <b>تنظیم سطح قدرت تفکر برای هر مدل (Thinking Level):</b>\n` +
+                `   ⚡ <b>Low (فوق‌سریع):</b> تفکر خاموش (بودجه ۰) برای پاسخ لحظه‌ای و زیر ۱ ثانیه\n` +
+                `   ⚖️ <b>Medium (متعادل):</b> تفکر متعادل (بودجه ۲۰۴۸) برای تحلیل هوشمندانه و پرسرعت\n` +
+                `   🧠 <b>High (عمیق):</b> تفکر و استدلال حداکثری (بودجه ۸۱۹۲) برای محاسبات و مسائل سخت\n` +
+                `• 🎛️ <b>دستورات تعاملی جدید:</b> داشبورد کامل <code>/model</code>، دستور اختصاصی <code>/power</code> و شورت‌کات‌هایی مثل <code>/model 3.7 low</code>.\n` +
+                `• 🛡️ <b>مدیریت هوشمند خطاها:</b> سازگاری خودکار با مدل‌ها و فال‌بک نرم‌افزاری در صورت بروز خطای تفکر.\n\n` +
                 `<i>مزمز دقیق، پرسرعت و وفادار در خدمت شماست، رئیس مهدی!</i>`,
                 { parse_mode: "HTML" }
               ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));

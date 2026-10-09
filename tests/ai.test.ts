@@ -5,7 +5,10 @@ import {
   isDeadModel,
   getModelCandidateChain,
   getResolvedActiveModel,
+  getThinkingBudget,
+  getActivePowerLevel,
 } from "../src/services/ai";
+import { matchModelName } from "../src/index";
 
 describe("ai service helpers", () => {
   describe("checkProfanity", () => {
@@ -59,6 +62,33 @@ describe("ai service helpers", () => {
       for (const m of chain) {
         expect(isDeadModel(m)).toBe(false);
       }
+    });
+  });
+
+  describe("power levels & thinking budget", () => {
+    it("should return 0 budget for low / turbo", () => {
+      expect(getThinkingBudget("low")).toBe(0);
+      expect(getThinkingBudget("lite")).toBe(0);
+    });
+
+    it("should return 2048 budget for medium", () => {
+      expect(getThinkingBudget("medium")).toBe(2048);
+      expect(getThinkingBudget("med")).toBe(2048);
+    });
+
+    it("should return 8192 budget for high", () => {
+      expect(getThinkingBudget("high")).toBe(8192);
+      expect(getThinkingBudget("deep")).toBe(8192);
+      expect(getThinkingBudget("pro")).toBe(8192);
+    });
+  });
+
+  describe("matchModelName alias matching", () => {
+    it("should match common model shortcuts", () => {
+      expect(matchModelName("3.7")).toBe("gemini-3.7-flash");
+      expect(matchModelName("3.8")).toBe("gemini-3.8-flash");
+      expect(matchModelName("3.5")).toBe("gemini-3.5-flash");
+      expect(matchModelName("lite")).toBe("gemini-3.5-flash-lite");
     });
   });
 });

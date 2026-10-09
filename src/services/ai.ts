@@ -51,6 +51,25 @@ export function isDeadModel(name: string): boolean {
   );
 }
 
+export type PowerLevel = "low" | "medium" | "high";
+
+export function getThinkingBudget(level: string): number {
+  const norm = (level || "").toLowerCase().trim();
+  if (norm === "high" || norm === "3" || norm === "deep" || norm === "pro") {
+    return 8192;
+  }
+  if (norm === "medium" || norm === "med" || norm === "normal" || norm === "2") {
+    return 2048;
+  }
+  return 0; // "low" / default = 0 (turbo/instant response)
+}
+
+export function getActivePowerLevel(): PowerLevel {
+  const stored = getSetting("ai_power_level", "low").toLowerCase().trim();
+  if (stored === "high" || stored === "medium") return stored;
+  return "low";
+}
+
 export interface ModelResolution {
   model: string;
   source: "stored override" | "GEMINI_MODELS" | "AI_MODEL" | "default";
@@ -829,6 +848,9 @@ export async function askGemini(
         httpOptions: agent ? { agent } : undefined,
       });
 
+    const activePower = getActivePowerLevel();
+    const thinkingBudget = getThinkingBudget(activePower);
+
     let modelSucceeded = false;
     let activeModelName = "";
     const toolResultCache = new Map<string, any>();
@@ -864,6 +886,9 @@ export async function askGemini(
               systemInstruction,
               temperature: activeTemperature,
               tools,
+              thinkingConfig: {
+                thinkingBudget,
+              },
             },
           });
           break; // Call 1 succeeded
@@ -879,6 +904,24 @@ export async function askGemini(
               : String(err?.message || "").includes("404")
               ? 404
               : 0);
+
+          // If model doesn't support thinkingConfig (400), retry call 1 without thinkingConfig
+          if (status === 400 && String(err?.message || "").toLowerCase().includes("thinking")) {
+            try {
+              call1Res = await currentAi.models.generateContent({
+                model: m,
+                contents: workingContents,
+                config: {
+                  systemInstruction,
+                  temperature: activeTemperature,
+                  tools,
+                },
+              });
+              break;
+            } catch (fallbackErr: any) {
+              lastErr = fallbackErr;
+            }
+          }
 
           // Non-retryable errors (400, 401, 403, 404): skip candidate immediately
           if (status === 400 || status === 401 || status === 403 || status === 404) {
@@ -1042,7 +1085,7 @@ export async function askGemini(
       });
 
       // --- 3. Second generateContent call (tools passed, mode = "NONE", retry with saved results) ---
-      const secondCallConfig = {
+      const secondCallConfig: any = {
         systemInstruction,
         temperature: activeTemperature,
         tools,
@@ -1050,6 +1093,9 @@ export async function askGemini(
           functionCallingConfig: {
             mode: "NONE" as any,
           },
+        },
+        thinkingConfig: {
+          thinkingBudget,
         },
       };
 
@@ -1081,6 +1127,30 @@ export async function askGemini(
               : String(err?.message || "").includes("404")
               ? 404
               : 0);
+
+          // If model doesn't support thinkingConfig (400), retry call 2 without thinkingConfig
+          if (status === 400 && String(err?.message || "").toLowerCase().includes("thinking")) {
+            try {
+              const fallbackConfig = {
+                systemInstruction,
+                temperature: activeTemperature,
+                tools,
+                toolConfig: {
+                  functionCallingConfig: {
+                    mode: "NONE" as any,
+                  },
+                },
+              };
+              call2Res = await currentAi.models.generateContent({
+                model: m,
+                contents: secondContents,
+                config: fallbackConfig,
+              });
+              break;
+            } catch (fallbackErr: any) {
+              lastErr = fallbackErr;
+            }
+          }
 
           if (status === 400 || status === 401 || status === 403 || status === 404) {
             console.warn(`[GEMINI SKIP] Model ${m} returned status ${status} on call 2. Skipping...`);
@@ -1169,7 +1239,7 @@ export async function askGemini(
     });
 
     console.warn(
-      `[GEMINI METRICS] Model: ${activeModelName}, finishReason: ${cand0?.finishReason || "UNKNOWN"}, parts: [${partKinds.join(", ")}], usageMetadata: ${JSON.stringify(response?.usageMetadata || {})}${response?.promptFeedback ? `, promptFeedback: ${JSON.stringify(response.promptFeedback)}` : ""}`
+      `[GEMINI METRICS] Model: ${activeModelName}, Power: ${activePower} (budget: ${thinkingBudget}), finishReason: ${cand0?.finishReason || "UNKNOWN"}, parts: [${partKinds.join(", ")}], usageMetadata: ${JSON.stringify(response?.usageMetadata || {})}`
     );
 
     let reply = parts
