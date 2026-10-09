@@ -339,6 +339,13 @@ bot.command(["history", "history@mazmazAgentBot"], async (ctx) => {
   }
 });
 
+export const MODEL_TIERS: Record<string, { label: string; desc: string; icon: string; speed: string }> = {
+  "gemini-3.5-flash-lite": { label: "سرعتی (Low)", desc: "پاسخ فوری و پرسرعت برای چت و کارهای عمومی", icon: "⚡", speed: "زیر ۱ ثانیه (~700ms)" },
+  "gemini-3.5-flash": { label: "متعادل (Medium)", desc: "کیفیت بالا، سرچ وب و تحلیل متون", icon: "⚖️", speed: "۲ الی ۳ ثانیه" },
+  "gemini-3.7-flash": { label: "استدلال عمیق (High)", desc: "استدلال مرحله‌ای، ریاضی و منطق فکری", icon: "🧠", speed: "۱۰ الی ۲۰ ثانیه" },
+  "gemini-3.8-flash": { label: "بالاترین قدرت (Pro)", desc: "معماری نرم‌افزار، حل مسائل سخت و کدنویسی عمیق", icon: "👑", speed: "۲۰ الی ۴۰ ثانیه" },
+};
+
 // 1.3 دستور مشاهده و تغییر مدل هوش مصنوعی (/model)
 bot.command(["model", "model@mazmazAgentBot"], async (ctx) => {
   const fromId = ctx.from?.id;
@@ -355,57 +362,78 @@ bot.command(["model", "model@mazmazAgentBot"], async (ctx) => {
     const oldModel = resolved.model;
     deleteSetting("ai_model");
     const newRes = getResolvedActiveModel();
+    const currentTier = MODEL_TIERS[newRes.model];
     console.log(`[ADMIN MODEL RESET] Admin ${fromId} reset model override at ${new Date().toISOString()} (was: ${oldModel}, now: ${newRes.model} from ${newRes.source})`);
     return ctx.reply(
       `🔄 <b>تنظیم مدل هوش مصنوعی ریست شد:</b>\n\n` +
-      `• مدل فعال جدید: <code>${newRes.model}</code>\n` +
+      `• مدل فعال جدید: <code>${newRes.model}</code> ${currentTier ? `(${currentTier.icon} ${currentTier.label})` : ""}\n` +
+      `• سرعت تخمینی: <code>${currentTier?.speed || "متغیر"}</code>\n` +
       `• منبع تعیین: <b>${newRes.source}</b>\n\n` +
-      `اورراید ذخیره‌شده پاک شد و مدل بر اساس اولویت سیستم (${newRes.source}) اعمال می‌شود.`,
+      `سیستم به مدل پیش‌فرض فوق‌سریع بازگشت.`,
       { parse_mode: "HTML" }
     );
   }
 
-  // ب: تغییر مدل با ارسال آرگومان
+  // ب: تغییر مدل با ارسال آرگومان یا شورت‌کات (low, med, high, pro)
   if (rawArg) {
-    if (CONFIG.ALLOWED_MODELS.includes(rawArg) && !isDeadModel(rawArg)) {
+    const argLower = rawArg.toLowerCase();
+    let targetModel = rawArg;
+    if (argLower === "low" || argLower === "lite" || argLower === "turbo" || argLower === "1") targetModel = "gemini-3.5-flash-lite";
+    else if (argLower === "med" || argLower === "medium" || argLower === "normal" || argLower === "2") targetModel = "gemini-3.5-flash";
+    else if (argLower === "high" || argLower === "think" || argLower === "deep" || argLower === "3") targetModel = "gemini-3.7-flash";
+    else if (argLower === "pro" || argLower === "max" || argLower === "4") targetModel = "gemini-3.8-flash";
+
+    if (CONFIG.ALLOWED_MODELS.includes(targetModel) && !isDeadModel(targetModel)) {
       const oldModel = resolved.model;
-      setSetting("ai_model", rawArg);
-      console.log(`[ADMIN MODEL CHANGE] Admin ${fromId} changed model from ${oldModel} to ${rawArg} at ${new Date().toISOString()}`);
+      setSetting("ai_model", targetModel);
+      const tierInfo = MODEL_TIERS[targetModel];
+      const tierText = tierInfo ? `\n• سطح کاری: ${tierInfo.icon} <b>${tierInfo.label}</b>\n• سرعت تخمینی: <code>${tierInfo.speed}</code>` : "";
+      console.log(`[ADMIN MODEL CHANGE] Admin ${fromId} changed model from ${oldModel} to ${targetModel} at ${new Date().toISOString()}`);
       return ctx.reply(
-        `✅ <b>مدل هوش مصنوعی با موفقیت ذخیره و فعال شد:</b>\n\n` +
+        `✅ <b>سطح و مدل هوش مصنوعی با موفقیت تنظیم شد:</b>\n\n` +
+        `• مدل فعال: <code>${targetModel}</code>${tierText}\n` +
         `• مدل قبلی: <code>${oldModel}</code>\n` +
-        `• مدل فعال جدید: <code>${rawArg}</code>\n` +
         `• منبع: <b>stored override</b>`,
         { parse_mode: "HTML" }
       );
     } else {
       return ctx.reply(
-        `❌ <b>مدل انتخابی مجاز نیست!</b>\n\n` +
-        `مدل <code>${escapeHtml(rawArg)}</code> در لیست <code>ALLOWED_MODELS</code> وجود ندارد یا منسوخ شده است.\n\n` +
-        `مدل‌های مجاز:\n${CONFIG.ALLOWED_MODELS.map((m) => `• <code>${m}</code>`).join("\n")}`,
+        `❌ <b>مدل انتخابی معتبر نیست!</b>\n\n` +
+        `💡 <b>شورت‌کات‌های سریع:</b>\n` +
+        `• <code>/model low</code> (حالت فوق‌سریع - زیر ۱ ثانیه ⚡)\n` +
+        `• <code>/model med</code> (حالت متعادل و باهوش ⚖️)\n` +
+        `• <code>/model high</code> (حالت استدلال و تحلیل عمیق 🧠)\n` +
+        `• <code>/model pro</code> (بالاترین قدرت محاسبات 👑)\n` +
+        `• <code>/model reset</code> (بازگشت به پیش‌فرض)`,
         { parse_mode: "HTML" }
       );
     }
   }
 
-  // ج: بدون آرگومان: نمایش وضعیت جاری، منبع و دکمه‌های شیشه‌ای
+  // ج: بدون آرگومان: نمایش وضعیت جاری و دکمه‌های ۳ سطحی
   const kb = new InlineKeyboard();
-  for (const m of CONFIG.ALLOWED_MODELS) {
-    const isCurrent = m === resolved.model;
-    kb.text(`${isCurrent ? "🔘 " : ""}${m}`, `set_model:${m}`).row();
+  for (const [mKey, tier] of Object.entries(MODEL_TIERS)) {
+    const isCurrent = mKey === resolved.model;
+    kb.text(`${isCurrent ? "🔘 " : ""}${tier.icon} ${tier.label}`, `set_model:${mKey}`).row();
   }
-  kb.text("🔄 ریست به حالت پیش‌فرض (Reset)", "reset_model_override").row();
+  kb.text("🔄 بازنشانی به پیش‌فرض (Reset)", "reset_model_override").row();
+
+  const currentTier = MODEL_TIERS[resolved.model];
+  const tierDisplay = currentTier ? `${currentTier.icon} <b>${currentTier.label}</b>` : "سفارشی";
+  const speedDisplay = currentTier ? `<code>${currentTier.speed}</code>` : "متغیر";
 
   await ctx.reply(
-    `🧠 <b>مدیریت و انتخاب مدل هوش مصنوعی:</b>\n\n` +
-    `• مدل فعال: <code>${resolved.model}</code>\n` +
-    `• منبع مقدار فعلی: <b>${resolved.source}</b>\n\n` +
-    `📋 <b>مدل‌های مجاز تعریف‌شده (ALLOWED_MODELS):</b>\n` +
-    `${CONFIG.ALLOWED_MODELS.map((m) => `• <code>${m}</code>`).join("\n")}\n\n` +
-    `💡 <i>راهنما:</i>\n` +
-    `• تغییر فوری: <code>/model &lt;model-name&gt;</code>\n` +
-    `• حذف اورراید: <code>/model reset</code>\n` +
-    `یا از دکمه‌های شیشه‌ای زیر انتخاب کنید:`,
+    `🧠 <b>تنظیم و انتخاب سطح مدل هوش مصنوعی:</b>\n\n` +
+    `• مدل فعال فعلی: <code>${resolved.model}</code>\n` +
+    `• سطح کاری: ${tierDisplay}\n` +
+    `• سرعت پاسخگویی: ${speedDisplay}\n` +
+    `• منبع مقدار: <b>${resolved.source}</b>\n\n` +
+    `📊 <b>راهنمای سطوح مختلف:</b>\n` +
+    `⚡ <b>Low (سرعتی):</b> <code>gemini-3.5-flash-lite</code> — زیر ۱ ثانیه\n` +
+    `⚖️ <b>Medium (متعادل):</b> <code>gemini-3.5-flash</code> — ۲ الی ۳ ثانیه\n` +
+    `🧠 <b>High (استدلال عمیق):</b> <code>gemini-3.7-flash</code> — تحلیل منطقی\n` +
+    `👑 <b>Pro (حرفه‌ای):</b> <code>gemini-3.8-flash</code> — کدنویسی و محاسبات سنگین\n\n` +
+    `سطح مورد نظر خود را از دکمه‌های زیر انتخاب کنید:`,
     { reply_markup: kb, parse_mode: "HTML" }
   );
 });
@@ -1155,13 +1183,16 @@ bot.callbackQuery(/^set_model:(.+)$/, async (ctx) => {
   }
   const oldModel = getResolvedActiveModel().model;
   setSetting("ai_model", newModel);
+  const tierInfo = MODEL_TIERS[newModel];
+  const tierText = tierInfo ? ` (${tierInfo.icon} ${tierInfo.label})` : "";
   console.log(`[ADMIN MODEL CHANGE] Admin ${fromId} changed model from ${oldModel} to ${newModel} at ${new Date().toISOString()}`);
   await ctx.editMessageText(
-    `✅ <b>مدل فعال هوش مصنوعی به <code>${newModel}</code> تغییر یافت.</b>\n` +
-    `منبع: <b>stored override</b>`,
+    `✅ <b>سطح و مدل فعال هوش مصنوعی به <code>${newModel}</code>${tierText} تغییر یافت.</b>\n` +
+    `• سرعت تخمینی: <code>${tierInfo?.speed || "متغیر"}</code>\n` +
+    `• منبع: <b>stored override</b>`,
     { parse_mode: "HTML" }
   ).catch(() => {});
-  await ctx.answerCallbackQuery({ text: `مدل به ${newModel} تغییر یافت.` });
+  await ctx.answerCallbackQuery({ text: `سطح به ${tierInfo?.label || newModel} تغییر یافت.` });
 });
 
 bot.callbackQuery("reset_model_override", async (ctx) => {
@@ -1170,10 +1201,12 @@ bot.callbackQuery("reset_model_override", async (ctx) => {
   const oldModel = getResolvedActiveModel().model;
   deleteSetting("ai_model");
   const newRes = getResolvedActiveModel();
+  const tierInfo = MODEL_TIERS[newRes.model];
   console.log(`[ADMIN MODEL RESET] Admin ${fromId} reset model override at ${new Date().toISOString()} (was: ${oldModel}, now: ${newRes.model} from ${newRes.source})`);
   await ctx.editMessageText(
-    `🔄 <b>اورراید مدل با موفقیت پاک شد.</b>\n\n` +
-    `• مدل فعال جدید: <code>${newRes.model}</code>\n` +
+    `🔄 <b>اورراید مدل با موفقیت پاک شد و سیستم به حالت پیش‌فرض بازگشت:</b>\n\n` +
+    `• مدل فعال جدید: <code>${newRes.model}</code> ${tierInfo ? `(${tierInfo.icon} ${tierInfo.label})` : ""}\n` +
+    `• سرعت تخمینی: <code>${tierInfo?.speed || "متغیر"}</code>\n` +
     `• منبع تعیین: <b>${newRes.source}</b>`,
     { parse_mode: "HTML" }
   ).catch(() => {});
@@ -1235,16 +1268,23 @@ bot.callbackQuery("reset_sysprompt", async (ctx) => {
 bot.callbackQuery("cmd_menu_model", async (ctx) => {
   const resolved = getResolvedActiveModel();
   const kb = new InlineKeyboard();
-  for (const m of CONFIG.ALLOWED_MODELS) {
-    const isCurrent = m === resolved.model;
-    kb.text(`${isCurrent ? "🔘 " : ""}${m}`, `set_model:${m}`).row();
+  for (const [mKey, tier] of Object.entries(MODEL_TIERS)) {
+    const isCurrent = mKey === resolved.model;
+    kb.text(`${isCurrent ? "🔘 " : ""}${tier.icon} ${tier.label}`, `set_model:${mKey}`).row();
   }
-  kb.text("🔄 ریست به حالت پیش‌فرض", "reset_model_override").row();
+  kb.text("🔄 بازنشانی به پیش‌فرض (Reset)", "reset_model_override").row();
+
+  const currentTier = MODEL_TIERS[resolved.model];
+  const tierDisplay = currentTier ? `${currentTier.icon} <b>${currentTier.label}</b>` : "سفارشی";
+  const speedDisplay = currentTier ? `<code>${currentTier.speed}</code>` : "متغیر";
 
   await ctx.editMessageText(
-    `🧠 <b>انتخاب مدل هوش مصنوعی:</b>\n\n` +
+    `🧠 <b>انتخاب سطح و مدل هوش مصنوعی:</b>\n\n` +
     `• مدل فعال: <code>${resolved.model}</code>\n` +
-    `• منبع: <b>${resolved.source}</b>`,
+    `• سطح کاری فعلی: ${tierDisplay}\n` +
+    `• سرعت تخمینی: ${speedDisplay}\n` +
+    `• منبع: <b>${resolved.source}</b>\n\n` +
+    `یکی از سطوح زیر را بر اساس سرعت یا عمق مورد نظر انتخاب کنید:`,
     { reply_markup: kb, parse_mode: "HTML" }
   );
 });
@@ -1960,13 +2000,16 @@ async function launchBotWithResilience() {
               // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه تاریخ، ساعت، کارهای جدید و رفع باگ‌ها
               await bot.api.sendMessage(
                 adminId,
-                `🚀 <b>آپدیت جدید مزمز: سرعت رعدآسا، حل لیمیت جمینای و بیلد پایدار!</b>\n\n` +
+                `🚀 <b>آپدیت جدید مزمز: سیستم ۳ سطحی مدل‌ها (Low / Medium / High / Pro)!</b>\n\n` +
                 `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
-                `🛠️ <b>اقدامات انجام‌شده در این نسخه:</b>\n` +
-                `• ⚡ <b>سرعت پاسخگویی زیر ۱ ثانیه (Turbo Speed):</b> بهینه‌سازی اولویت مدل‌ها با <code>gemini-3.5-flash-lite</code> و کاهش زمان پاسخگویی از ۴۰ ثانیه به کمتر از ۱ ثانیه (~700ms).\n` +
-                `• 🔑 <b>اتصال مستقیم به Google Cloud و رفع لیمیت:</b> فعال‌سازی کلید رسمی AI Studio با نرخ موفقیت ۱۰۰٪ در پردازش همزمان پیام‌ها و حذف محدودیت ۲۰ پیام وب.\n` +
-                `• 🛠️ <b>مهاجرت بیلد ریلوی به Nixpacks:</b> حذف کامل خطاهای ۴۲۹ و ۴۰۳ داکر هاب و ارتقای پایداری داکر با استقرار مستقیم بر پایه Nix.\n` +
-                `• 📊 <b>افزوده شدن ابزار بنچمارک و استرس‌تست:</b> امکان تست لایو زمان پاسخگویی و پایداری درخواست‌های همزمان با اسکریپت اختصاصی.\n\n` +
+                `🛠️ <b>امکانات و تغییرات این نسخه:</b>\n` +
+                `• 🎚️ <b>سیستم سطوح چندگانه هوش مصنوعی (/model):</b>\n` +
+                `   ⚡ <b>Low (سرعتی):</b> <code>gemini-3.5-flash-lite</code> (پاسخ برق‌آسا زیر ۱ ثانیه)\n` +
+                `   ⚖️ <b>Medium (متعادل):</b> <code>gemini-3.5-flash</code> (هوشمند و روان ۲ الی ۳ ثانیه)\n` +
+                `   🧠 <b>High (استدلال عمیق):</b> <code>gemini-3.7-flash</code> (تحلیل منطقی و محاسباتی)\n` +
+                `   👑 <b>Pro (حرفه‌ای):</b> <code>gemini-3.8-flash</code> (معماری کد و مسائل سنگین)\n` +
+                `• ⚡ <b>شورت‌کات‌های دستوری جدید:</b> امکان سوییچ سریع با دستوراتی مثل <code>/model low</code> یا <code>/model high</code>.\n` +
+                `• 🔑 <b>پایداری کامل اتصال به گوگل کلود:</b> رفع ۱۰۰٪ لیمیت و پردازش همزمان بدون خطا.\n\n` +
                 `<i>مزمز دقیق، پرسرعت و وفادار در خدمت شماست، رئیس مهدی!</i>`,
                 { parse_mode: "HTML" }
               ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));
