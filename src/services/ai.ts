@@ -76,7 +76,7 @@ export function getResolvedActiveModel(): ModelResolution {
   }
 
   // 4. Safe default in code
-  const safeDefault = CONFIG.ALLOWED_MODELS.find((m) => !isDeadModel(m)) || "gemini-3.7-flash";
+  const safeDefault = CONFIG.ALLOWED_MODELS.find((m) => !isDeadModel(m)) || "gemini-3.5-flash-lite";
   return { model: safeDefault, source: "default" };
 }
 

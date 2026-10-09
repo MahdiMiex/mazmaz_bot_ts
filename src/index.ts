@@ -77,6 +77,11 @@ if (!CONFIG.BOT_TOKEN) {
   process.exit(1);
 }
 
+// Auto-migrate legacy slow models to ultra-fast default
+if (getSetting("ai_model") === "gemini-3.7-flash" || getSetting("ai_model") === "gemini-3.8-flash") {
+  deleteSetting("ai_model");
+}
+
 const startupModelRes = getResolvedActiveModel();
 console.log(`🤖 [CONFIG] Active AI model: "${startupModelRes.model}" (Source: ${startupModelRes.source})`);
 console.log(`📦 [CONFIG] Database storage path (DB_PATH): "${CONFIG.DB_PATH}"`);
