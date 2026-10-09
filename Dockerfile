@@ -1,4 +1,4 @@
-FROM oven/bun:1-debian
+FROM ghcr.io/oven-sh/bun:1-debian
 
 WORKDIR /app
 
