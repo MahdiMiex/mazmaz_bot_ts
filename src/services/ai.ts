@@ -80,6 +80,25 @@ export function getResolvedActiveModel(): ModelResolution {
   return { model: safeDefault, source: "default" };
 }
 
+export const modelCooldowns = new Map<string, { expiresAt: number; logged: boolean }>();
+
+export function markModelCooldown(modelName: string, durationMs = 60000): void {
+  modelCooldowns.set(modelName, {
+    expiresAt: Date.now() + durationMs,
+    logged: false,
+  });
+}
+
+export function isModelInCooldown(modelName: string): boolean {
+  const cd = modelCooldowns.get(modelName);
+  if (!cd) return false;
+  if (Date.now() >= cd.expiresAt) {
+    modelCooldowns.delete(modelName);
+    return false;
+  }
+  return true;
+}
+
 export function getModelCandidateChain(): string[] {
   const active = getResolvedActiveModel().model;
   const rawList = [
@@ -87,9 +106,55 @@ export function getModelCandidateChain(): string[] {
     ...CONFIG.GEMINI_MODELS,
     CONFIG.AI_MODEL,
   ];
-  return [...new Set(rawList.filter(Boolean))].filter(
+  const allCandidates = [...new Set(rawList.filter(Boolean))].filter(
     (m) => !isDeadModel(m) && CONFIG.ALLOWED_MODELS.includes(m)
   );
+
+  if (allCandidates.length <= 1) {
+    return allCandidates;
+  }
+
+  const now = Date.now();
+  const available: string[] = [];
+  const cooling: Array<{ model: string; expiresAt: number; cd: { expiresAt: number; logged: boolean } }> = [];
+
+  for (const m of allCandidates) {
+    const cd = modelCooldowns.get(m);
+    if (cd && now < cd.expiresAt) {
+      cooling.push({ model: m, expiresAt: cd.expiresAt, cd });
+    } else {
+      if (cd && now >= cd.expiresAt) {
+        modelCooldowns.delete(m);
+      }
+      available.push(m);
+    }
+  }
+
+  if (available.length > 0) {
+    for (const item of cooling) {
+      if (!item.cd.logged) {
+        const remainingSeconds = Math.max(1, Math.ceil((item.expiresAt - now) / 1000));
+        console.warn(`[GEMINI COOLDOWN] model ${item.model} skipped for ${remainingSeconds} s`);
+        item.cd.logged = true;
+      }
+    }
+    return available;
+  }
+
+  // If every candidate is cooling down, try the one with the earliest expiry
+  cooling.sort((a, b) => a.expiresAt - b.expiresAt);
+  const chosen = cooling[0];
+
+  for (let i = 1; i < cooling.length; i++) {
+    const item = cooling[i];
+    if (!item.cd.logged) {
+      const remainingSeconds = Math.max(1, Math.ceil((item.expiresAt - now) / 1000));
+      console.warn(`[GEMINI COOLDOWN] model ${item.model} skipped for ${remainingSeconds} s`);
+      item.cd.logged = true;
+    }
+  }
+
+  return [chosen.model];
 }
 
 export async function checkAvailableGeminiModels(apiKey: string): Promise<void> {
@@ -824,6 +889,7 @@ export async function askGemini(
           // Rate limit (429): rotate key if possible, do NOT retry same model if no other key
           if (status === 429) {
             markKeyCooldown(currentKey, 60000);
+            markModelCooldown(m, 60000);
             keysTriedCall1++;
             if (keysTriedCall1 < keyPool.length && keyPool.length > 1) {
               currentKeyIdx = (currentKeyIdx + 1) % keyPool.length;
@@ -1023,6 +1089,7 @@ export async function askGemini(
 
           if (status === 429) {
             markKeyCooldown(currentKey, 60000);
+            markModelCooldown(m, 60000);
             keysTriedCall2++;
             if (keysTriedCall2 < keyPool.length && keyPool.length > 1) {
               currentKeyIdx = (currentKeyIdx + 1) % keyPool.length;
@@ -1074,6 +1141,10 @@ export async function askGemini(
             call2Res = retryRes;
           }
         } catch (retryErr: any) {
+          const status = retryErr?.status || retryErr?.error?.code || (String(retryErr?.message || "").includes("429") ? 429 : 0);
+          if (status === 429) {
+            markModelCooldown(m, 60000);
+          }
           console.warn(`[GEMINI] Retry of second call failed:`, retryErr?.message || retryErr);
         }
       }
