@@ -28,12 +28,12 @@ export const CONFIG = {
     .split(",")
     .map((k) => k.trim())
     .filter(Boolean),
-  AI_MODEL: process.env.AI_MODEL || "gemini-3.7-flash",
-  GEMINI_MODELS: (process.env.GEMINI_MODELS || "gemini-3.7-flash,gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite")
+  AI_MODEL: process.env.AI_MODEL || "gemini-3.5-flash-lite",
+  GEMINI_MODELS: (process.env.GEMINI_MODELS || "gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.5-flash,gemini-3.6-flash,gemini-3.7-flash,gemini-3.8-flash")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
-  ALLOWED_MODELS: (process.env.ALLOWED_MODELS || "gemini-3.7-flash,gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite")
+  ALLOWED_MODELS: (process.env.ALLOWED_MODELS || "gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.5-flash,gemini-3.6-flash,gemini-3.7-flash,gemini-3.8-flash,gemini-3.1-flash-lite")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
