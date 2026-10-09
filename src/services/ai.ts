@@ -190,18 +190,15 @@ export function isSensitiveExfiltrationAttempt(text: string): boolean {
 }
 
 export const READ_ONLY_TOOLS = new Set<string>([
+  "eval_math",
+  "fetch_url",
+  "fetch_page",
+  "fetch_web_page",
   "web_search",
   "get_weather",
   "get_crypto_prices",
   "query_benchmark",
-  "fetch_page",
-  "fetch_url",
   "read_web_link",
-  "eval_math",
-  "generate_chat_digest",
-  "summarize_chat",
-  "fetch_web_page",
-  "take_web_screenshot",
 ]);
 
 export function isSuccessfulToolResult(res: any): boolean {
@@ -927,7 +924,7 @@ export async function askGemini(
         );
       }
 
-      // Step B: Run mutating/admin tools SEQUENTIALLY, in model's original order, AFTER read-only batch
+      // Step B: Run mutating/admin tools SEQUENTIALLY (no timeout), in model's original order, AFTER read-only batch
       for (const { index, call } of mutatingBatch) {
         const cacheKey = `${call.name}:${JSON.stringify(call.args || {})}`;
         if (toolResultCache.has(cacheKey)) {
@@ -936,22 +933,22 @@ export async function askGemini(
         }
 
         try {
-          const res = await executeToolWithTimeout(
+          const res = await executeTool(
             call.name,
             call.args || {},
             userId,
-            ctx,
-            20000
+            ctx
           );
           toolResults[index] = res;
-          if (isSuccessfulToolResult(res)) {
-            toolResultCache.set(cacheKey, res);
-          }
+          // Always cache mutating tools, even on failure, to prevent duplicate execution across candidates
+          toolResultCache.set(cacheKey, res);
         } catch (err: any) {
-          toolResults[index] = {
+          const failureRes = {
             ok: false,
-            error: "Tool execution failed or timed out",
+            error: err?.message || "Tool execution failed",
           };
+          toolResults[index] = failureRes;
+          toolResultCache.set(cacheKey, failureRes);
         }
       }
 
