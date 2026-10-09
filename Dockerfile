@@ -1,12 +1,16 @@
-FROM ghcr.io/oven-sh/bun:1-debian
+FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y sqlite3 ca-certificates curl ffmpeg python3 && \
+# Install system dependencies & Bun & yt-dlp
+RUN apt-get update && apt-get install -y sqlite3 ca-certificates curl ffmpeg python3 unzip && \
+    curl -fsSL https://bun.sh/install | bash && \
     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp && \
     rm -rf /var/lib/apt/lists/*
+
+# Add Bun to PATH
+ENV PATH="/root/.bun/bin:${PATH}"
 
 # Copy dependency specifications first for Docker layer caching
 COPY package.json bun.lock tsconfig.json ./
