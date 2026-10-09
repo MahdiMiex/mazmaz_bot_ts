@@ -118,7 +118,7 @@ export async function generateChatDigest(
 متن گفتگو:
 ${transcript}`;
 
-  const fastModels = ["gemini-2.0-flash-lite", "gemini-2.0-flash"];
+  const fastModels = ["gemini-3.7-flash"];
 
   for (const model of fastModels) {
     try {

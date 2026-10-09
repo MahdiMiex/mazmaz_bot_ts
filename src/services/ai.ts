@@ -43,12 +43,11 @@ export function isPersian(text: string): boolean {
 export function isDeadModel(name: string): boolean {
   const lower = (name || "").toLowerCase().trim();
   return (
+    lower.startsWith("gemini-1.5-") ||
     lower.startsWith("gemini-2.0-") ||
     lower.startsWith("gemini-2.5-") ||
     lower === "gemini-2.0" ||
-    lower === "gemini-2.5" ||
-    lower === "gemini-2.0-flash" ||
-    lower === "gemini-2.0-flash-lite"
+    lower === "gemini-2.5"
   );
 }
 
@@ -77,7 +76,7 @@ export function getResolvedActiveModel(): ModelResolution {
   }
 
   // 4. Safe default in code
-  const safeDefault = CONFIG.ALLOWED_MODELS.find((m) => !isDeadModel(m)) || "gemini-1.5-flash";
+  const safeDefault = CONFIG.ALLOWED_MODELS.find((m) => !isDeadModel(m)) || "gemini-3.7-flash";
   return { model: safeDefault, source: "default" };
 }
 
@@ -87,11 +86,10 @@ export function getModelCandidateChain(): string[] {
     active,
     ...CONFIG.GEMINI_MODELS,
     CONFIG.AI_MODEL,
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    "gemini-1.5-pro",
   ];
-  return [...new Set(rawList.filter(Boolean))].filter((m) => !isDeadModel(m));
+  return [...new Set(rawList.filter(Boolean))].filter(
+    (m) => !isDeadModel(m) && CONFIG.ALLOWED_MODELS.includes(m)
+  );
 }
 
 export async function checkAvailableGeminiModels(apiKey: string): Promise<void> {
