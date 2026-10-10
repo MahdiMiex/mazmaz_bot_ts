@@ -34,7 +34,13 @@ const GREETINGS_EN = [
   "Always happy to hear from you! What do you need? ✨",
 ];
 
-export const runningTasks = new Map<number, AbortController>();
+export interface RunningTask {
+  controller: AbortController;
+  ownerId: number;
+  startedAt: number;
+}
+
+export const runningTasks = new Map<number, RunningTask>();
 
 export async function handleTextMessage(ctx: Context) {
   const text = ctx.message?.text?.trim();
@@ -466,15 +472,21 @@ export async function handleTextMessage(ctx: Context) {
   if (musicMatch && musicMatch[1]) {
     incrementStat("downloads_requested");
     const chatId = ctx.chat?.id;
+    const ownerId = ctx.from!.id;
     const controller = new AbortController();
+    const taskEntry: RunningTask = {
+      controller,
+      ownerId,
+      startedAt: Date.now(),
+    };
     if (chatId !== undefined) {
-      runningTasks.get(chatId)?.abort();
-      runningTasks.set(chatId, controller);
+      runningTasks.get(chatId)?.controller.abort();
+      runningTasks.set(chatId, taskEntry);
     }
     try {
       await sendMusicToTelegram(ctx, musicMatch[1].trim(), undefined, undefined, controller.signal);
     } finally {
-      if (chatId !== undefined && runningTasks.get(chatId) === controller) {
+      if (chatId !== undefined && runningTasks.get(chatId) === taskEntry) {
         runningTasks.delete(chatId);
       }
     }
@@ -714,10 +726,16 @@ export async function handleTextMessage(ctx: Context) {
   // 12. چت عمومی هوش مصنوعی با Gemini و سیستم پیش‌نمایش و تایپینگ زنده
   incrementStat("ai_queries");
   const chatId = ctx.chat?.id;
+  const ownerId = ctx.from!.id;
   const controller = new AbortController();
+  const taskEntry: RunningTask = {
+    controller,
+    ownerId,
+    startedAt: Date.now(),
+  };
   if (chatId !== undefined) {
-    runningTasks.get(chatId)?.abort();
-    runningTasks.set(chatId, controller);
+    runningTasks.get(chatId)?.controller.abort();
+    runningTasks.set(chatId, taskEntry);
   }
 
   let statusMsg: any = null;
@@ -782,7 +800,7 @@ export async function handleTextMessage(ctx: Context) {
     }
     throw err;
   } finally {
-    if (chatId !== undefined && runningTasks.get(chatId) === controller) {
+    if (chatId !== undefined && runningTasks.get(chatId) === taskEntry) {
       runningTasks.delete(chatId);
     }
   }

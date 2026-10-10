@@ -11,6 +11,7 @@ import {
 } from "./handlers/commands";
 import { handlePhotoMessage } from "./handlers/photo";
 import { handleTextMessage, runningTasks } from "./handlers/message";
+import { getSequentialKey } from "./utils/sequentialKey";
 import {
   getUserCount,
   getAllUsers,
@@ -105,16 +106,7 @@ export const bot = new Bot(CONFIG.BOT_TOKEN, {
 });
 
 // 0. Sequentialize updates per chat, bypassing /stop command and inline callback queries
-bot.use(
-  sequentialize((ctx) => {
-    if (ctx.callbackQuery) return undefined;
-    const text = ctx.message?.text || ctx.msg?.text;
-    if (text && /^\/stop(?:@\w+)?(?:\s|$)/i.test(text.trim())) {
-      return undefined;
-    }
-    return ctx.chat?.id ? String(ctx.chat.id) : undefined;
-  })
-);
+bot.use(sequentialize(getSequentialKey));
 
 // 0.5 Register Telegram Group Tracking Middleware (ذخیره تاریخچه پیام‌ها برای هوش مصنوعی)
 setupTrackingMiddleware(bot);
@@ -206,14 +198,22 @@ bot.on("my_chat_member", async (ctx) => {
 // هندل کردن کامند stop (با پشتیبانی از اسم کاربری ربات در گروه)
 bot.command(["stop", "stop@mazmazAgentBot"], async (ctx) => {
   const chatId = ctx.chat?.id;
-  let taskStopped = false;
+  const senderId = ctx.from?.id;
+  const runningTask = chatId !== undefined ? runningTasks.get(chatId) : undefined;
 
-  if (chatId !== undefined && runningTasks.has(chatId)) {
-    const controller = runningTasks.get(chatId);
-    if (controller) {
-      controller.abort();
-      runningTasks.delete(chatId);
+  let taskStopped = false;
+  let unauthorizedStop = false;
+
+  if (runningTask) {
+    const isOwner = senderId !== undefined && runningTask.ownerId === senderId;
+    const isAdmin = senderId !== undefined && CONFIG.ADMIN_IDS.includes(senderId);
+
+    if (isOwner || isAdmin) {
+      runningTask.controller.abort();
+      runningTasks.delete(chatId!);
       taskStopped = true;
+    } else {
+      unauthorizedStop = true;
     }
   }
 
@@ -221,9 +221,14 @@ bot.command(["stop", "stop@mazmazAgentBot"], async (ctx) => {
     clearUserHistory(ctx.from.id);
   }
 
-  const replyText = taskStopped
-    ? "⛔ عملیات در حال اجرا متوقف شد و حافظه مکالمه پاک گردید."
-    : "هیچ عملیات فعالی در حال اجرا نبود. حافظه مکالمه پاک شد.";
+  let replyText = "";
+  if (unauthorizedStop) {
+    replyText = "فقط درخواست‌دهنده یا مدیر می‌تواند عملیات را متوقف کند.";
+  } else if (taskStopped) {
+    replyText = "⛔ عملیات در حال اجرا متوقف شد و حافظه مکالمه پاک گردید.";
+  } else {
+    replyText = "هیچ عملیات فعالی در حال اجرا نبود. حافظه مکالمه پاک شد.";
+  }
 
   await ctx.reply(replyText, {
     reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
