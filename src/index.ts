@@ -1,4 +1,5 @@
 import { Bot, InlineKeyboard, InputFile } from "grammy";
+import { run, sequentialize } from "@grammyjs/runner";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { CONFIG, updateGeminiApiKey, validateStartupConfig } from "./config";
 import { accessControlMiddleware } from "./handlers/access";
@@ -9,7 +10,7 @@ import {
   getMainMenu,
 } from "./handlers/commands";
 import { handlePhotoMessage } from "./handlers/photo";
-import { handleTextMessage } from "./handlers/message";
+import { handleTextMessage, runningTasks } from "./handlers/message";
 import {
   getUserCount,
   getAllUsers,
@@ -103,6 +104,18 @@ export const bot = new Bot(CONFIG.BOT_TOKEN, {
   },
 });
 
+// 0. Sequentialize updates per chat, bypassing /stop command and inline callback queries
+bot.use(
+  sequentialize((ctx) => {
+    if (ctx.callbackQuery) return undefined;
+    const text = ctx.message?.text || ctx.msg?.text;
+    if (text && /^\/stop(?:@\w+)?(?:\s|$)/i.test(text.trim())) {
+      return undefined;
+    }
+    return ctx.chat?.id ? String(ctx.chat.id) : undefined;
+  })
+);
+
 // 0.5 Register Telegram Group Tracking Middleware (ذخیره تاریخچه پیام‌ها برای هوش مصنوعی)
 setupTrackingMiddleware(bot);
 
@@ -192,10 +205,27 @@ bot.on("my_chat_member", async (ctx) => {
 // 2. Register Commands
 // هندل کردن کامند stop (با پشتیبانی از اسم کاربری ربات در گروه)
 bot.command(["stop", "stop@mazmazAgentBot"], async (ctx) => {
+  const chatId = ctx.chat?.id;
+  let taskStopped = false;
+
+  if (chatId !== undefined && runningTasks.has(chatId)) {
+    const controller = runningTasks.get(chatId);
+    if (controller) {
+      controller.abort();
+      runningTasks.delete(chatId);
+      taskStopped = true;
+    }
+  }
+
   if (ctx.from) {
     clearUserHistory(ctx.from.id);
   }
-  await ctx.reply("باشه بابا، قطع کردم! هر وقت خواستی برگرد.", {
+
+  const replyText = taskStopped
+    ? "⛔ عملیات در حال اجرا متوقف شد و حافظه مکالمه پاک گردید."
+    : "هیچ عملیات فعالی در حال اجرا نبود. حافظه مکالمه پاک شد.";
+
+  await ctx.reply(replyText, {
     reply_parameters: { message_id: ctx.message!.message_id, allow_sending_without_reply: true },
   });
 });
@@ -2076,11 +2106,17 @@ bot.callbackQuery(/^grp_(?:reject|leave):(\-?\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery({ text: "از گروه خارج شد." });
 });
 
+let activeRunner: ReturnType<typeof run> | null = null;
+
 // مدیریت خاموش‌سازی تمیز کانتینر (Graceful Shutdown) برای جلوگیری از تداخل 409 هنگام دیپلوی مجدد
 process.once("SIGINT", async () => {
   console.log("🛑 دریافت سیگنال SIGINT، توقف تمیز بات...");
   try {
-    await bot.stop();
+    if (activeRunner && activeRunner.isRunning()) {
+      await activeRunner.stop();
+    } else {
+      await bot.stop();
+    }
   } catch {}
   process.exit(0);
 });
@@ -2088,7 +2124,11 @@ process.once("SIGINT", async () => {
 process.once("SIGTERM", async () => {
   console.log("🛑 دریافت سیگنال SIGTERM (دیپلوی جدید در Railway)، آزادسازی فوری اتصال به تلگرام...");
   try {
-    await bot.stop();
+    if (activeRunner && activeRunner.isRunning()) {
+      await activeRunner.stop();
+    } else {
+      await bot.stop();
+    }
   } catch {}
   process.exit(0);
 });
@@ -2100,112 +2140,128 @@ async function launchBotWithResilience() {
 
   while (attempt < maxRetries) {
     try {
-      await bot.start({
-        drop_pending_updates: true,
-        allowed_updates: [
-          "message",
-          "edited_message",
-          "callback_query",
-          "my_chat_member",
-          "chat_member",
-        ],
-        onStart: async (info) => {
-          console.log(`\n==========================================`);
-          console.log(`  🤖 mazmaz is RUNNING on Bun + TypeScript!`);
-          console.log(`  Username: @${info.username} (ID: ${info.id})`);
-          console.log(`==========================================\n`);
+      if (!bot.isInited()) {
+        await bot.init();
+      }
+      await bot.api.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
 
-          try {
-            // لیست کامل و انحصاری دستورات فقط برای رئیس مهدی در تلگرام نمایش داده می‌شود
-            for (const adminId of CONFIG.ADMIN_IDS) {
-              await bot.api.setMyCommands(
-                [
-                  { command: "admin", description: "👑 پنل مدیریت و آمار سیستم" },
-                  { command: "groups", description: "👥 مدیریت و نظارت بر گروه‌ها" },
-                  { command: "addgroup", description: "➕ ثبت دستی گروه با آیدی" },
-                  { command: "logs", description: "📜 مشاهده لاگ پیام‌ها و گفتگوهای کاربران" },
-                  { command: "set_quota", description: "🔢 تنظیم سهمیه روزانه کاربر" },
-                  { command: "add_quota", description: "➕ افزایش سهمیه کاربر" },
-                  { command: "mute", description: "⏳ میوت کردن کاربر (با ساعت و دلیل)" },
-                  { command: "unmute", description: "🔊 رفع میوت کاربر" },
-                  { command: "ban", description: "🚫 مسدودسازی کامل (بن) کاربر" },
-                  { command: "unban", description: "🟢 رفع مسدودسازی کاربر" },
-                  { command: "reply_user", description: "💬 ارسال پیام مستقیم به کاربر" },
-                  { command: "setkey", description: "🔑 تنظیم کلید هوش مصنوعی" },
-                  { command: "broadcast", description: "📢 ارسال پیام همگانی" },
-                  { command: "grant_cmd", description: "🔓 اعطای دسترسی اسلش به کاربر" },
-                  { command: "revoke_cmd", description: "🔒 لغو دسترسی اسلش کاربر" },
-                  { command: "dollar", description: "💵 قیمت دلار، ارز و طلا با نمودار" },
-                  { command: "browse", description: "🌐 مرورگر هوشمند وب و خواندن لینک" },
-                  { command: "weather", description: "🌤️ وضعیت زنده و پیش‌بینی آب و هوا" },
-                  { command: "tasks", description: "📋 مدیریت لیست کارها" },
-                  { command: "stop", description: "🛑 توقف گفتگو و پاکسازی" },
-                  { command: "history", description: "🧹 پاک کردن حافظه چت" },
-                ],
-                { scope: { type: "chat", chat_id: adminId } }
-              ).catch(() => {});
+      const info = bot.botInfo;
+      console.log(`\n==========================================`);
+      console.log(`  🤖 mazmaz is RUNNING on Bun + TypeScript!`);
+      console.log(`  Username: @${info.username} (ID: ${info.id})`);
+      console.log(`==========================================\n`);
 
-              // آماده‌سازی تاریخ و ساعت دقیق به وقت ایران
-              const now = new Date();
-              const dateFa = new Intl.DateTimeFormat("fa-IR", {
-                timeZone: "Asia/Tehran",
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              }).format(now);
-              const timeFa = new Intl.DateTimeFormat("fa-IR", {
-                timeZone: "Asia/Tehran",
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-                hour12: false,
-              }).format(now);
+      try {
+        // لیست کامل و انحصاری دستورات فقط برای رئیس مهدی در تلگرام نمایش داده می‌شود
+        for (const adminId of CONFIG.ADMIN_IDS) {
+          await bot.api.setMyCommands(
+            [
+              { command: "admin", description: "👑 پنل مدیریت و آمار سیستم" },
+              { command: "groups", description: "👥 مدیریت و نظارت بر گروه‌ها" },
+              { command: "addgroup", description: "➕ ثبت دستی گروه با آیدی" },
+              { command: "logs", description: "📜 مشاهده لاگ پیام‌ها و گفتگوهای کاربران" },
+              { command: "set_quota", description: "🔢 تنظیم سهمیه روزانه کاربر" },
+              { command: "add_quota", description: "➕ افزایش سهمیه کاربر" },
+              { command: "mute", description: "⏳ میوت کردن کاربر (با ساعت و دلیل)" },
+              { command: "unmute", description: "🔊 رفع میوت کاربر" },
+              { command: "ban", description: "🚫 مسدودسازی کامل (بن) کاربر" },
+              { command: "unban", description: "🟢 رفع مسدودسازی کاربر" },
+              { command: "reply_user", description: "💬 ارسال پیام مستقیم به کاربر" },
+              { command: "setkey", description: "🔑 تنظیم کلید هوش مصنوعی" },
+              { command: "broadcast", description: "📢 ارسال پیام همگانی" },
+              { command: "grant_cmd", description: "🔓 اعطای دسترسی اسلش به کاربر" },
+              { command: "revoke_cmd", description: "🔒 لغو دسترسی اسلش کاربر" },
+              { command: "dollar", description: "💵 قیمت دلار، ارز و طلا با نمودار" },
+              { command: "browse", description: "🌐 مرورگر هوشمند وب و خواندن لینک" },
+              { command: "weather", description: "🌤️ وضعیت زنده و پیش‌بینی آب و هوا" },
+              { command: "tasks", description: "📋 مدیریت لیست کارها" },
+              { command: "stop", description: "🛑 توقف گفتگو و پاکسازی" },
+              { command: "history", description: "🧹 پاک کردن حافظه چت" },
+            ],
+            { scope: { type: "chat", chat_id: adminId } }
+          ).catch(() => {});
 
-              // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه تاریخ، ساعت، کارهای جدید و رفع باگ‌ها
-              await bot.api.sendMessage(
-                adminId,
-                `🚀 <b>آپدیت جدید مزمز: پشتیبانی از تمام مدل‌ها + کنترل سطح تفکر (Low / Medium / High)!</b>\n\n` +
-                `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
-                `🛠️ <b>امکانات و بهبودهای این نسخه:</b>\n` +
-                `• 💎 <b>حفظ لیست کامل مدل‌های هوش مصنوعی:</b> دسترسی آزاد به تمامی مدل‌های <code>gemini-3.7-flash</code>, <code>gemini-3.8-flash</code>, <code>gemini-3.5-flash</code>, <code>gemini-3.5-flash-lite</code> و...\n` +
-                `• ⚡ <b>تنظیم سطح قدرت تفکر برای هر مدل (Thinking Level):</b>\n` +
-                `   ⚡ <b>Low (فوق‌سریع):</b> تفکر خاموش (بودجه ۰) برای پاسخ لحظه‌ای و زیر ۱ ثانیه\n` +
-                `   ⚖️ <b>Medium (متعادل):</b> تفکر متعادل (بودجه ۲۰۴۸) برای تحلیل هوشمندانه و پرسرعت\n` +
-                `   🧠 <b>High (عمیق):</b> تفکر و استدلال حداکثری (بودجه ۸۱۹۲) برای محاسبات و مسائل سخت\n` +
-                `• 🎛️ <b>دستورات تعاملی جدید:</b> داشبورد کامل <code>/model</code>، دستور اختصاصی <code>/power</code> و شورت‌کات‌هایی مثل <code>/model 3.7 low</code>.\n` +
-                `• 🛡️ <b>مدیریت هوشمند خطاها:</b> سازگاری خودکار با مدل‌ها و فال‌بک نرم‌افزاری در صورت بروز خطای تفکر.\n\n` +
-                `<i>مزمز دقیق، پرسرعت و وفادار در خدمت شماست، رئیس مهدی!</i>`,
-                { parse_mode: "HTML" }
-              ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));
-            }
+          // آماده‌سازی تاریخ و ساعت دقیق به وقت ایران
+          const now = new Date();
+          const dateFa = new Intl.DateTimeFormat("fa-IR", {
+            timeZone: "Asia/Tehran",
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          }).format(now);
+          const timeFa = new Intl.DateTimeFormat("fa-IR", {
+            timeZone: "Asia/Tehran",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: false,
+          }).format(now);
 
-            // ثبت منوی ۷ دستور اسلش استاندارد در تلگرام برای کاربران و پاکسازی در گروه‌ها
-            await bot.api.setMyCommands([
-              { command: "clear", description: "پاکسازی حافظه و زمینه گفتگو" },
-              { command: "history", description: "مشاهده لاگ پیام‌های اخیر گفتگو" },
-              { command: "model", description: "مشاهده یا تغییر مدل هوش مصنوعی" },
-              { command: "temp", description: "تنظیم میزان خلاقیت پاسخ‌ها (Temperature)" },
-              { command: "lang", description: "تغییر زبان ربات (فارسی / English)" },
-              { command: "system", description: "مشاهده و تنظیم دستورالعمل سیستمی" },
-              { command: "settings", description: "منوی تنظیمات تعاملی ربات" },
-            ], { scope: { type: "default" } }).catch(() => {});
-            await bot.api.deleteMyCommands({ scope: { type: "all_group_chats" } }).catch(() => {});
-            console.log("✅ Standard Slash Commands registered for users via setMyCommands!");
-          } catch (e: any) {
-            console.warn("⚠️ Could not set bot commands automatically:", e?.message || e);
-          }
+          // ارسال اعلان آپدیت جدید به تلگرام رئیس مهدی به همراه تاریخ، ساعت، کارهای جدید و رفع باگ‌ها
+          await bot.api.sendMessage(
+            adminId,
+            `🚀 <b>آپدیت جدید مزمز: پشتیبانی از تمام مدل‌ها + کنترل سطح تفکر (Low / Medium / High)!</b>\n\n` +
+            `📅 <b>زمان استقرار:</b> <code>${dateFa} | ساعت ${timeFa}</code>\n\n` +
+            `🛠️ <b>امکانات و بهبودهای این نسخه:</b>\n` +
+            `• 💎 <b>حفظ لیست کامل مدل‌های هوش مصنوعی:</b> دسترسی آزاد به تمامی مدل‌های <code>gemini-3.7-flash</code>, <code>gemini-3.8-flash</code>, <code>gemini-3.5-flash</code>, <code>gemini-3.5-flash-lite</code> و...\n` +
+            `• ⚡ <b>تنظیم سطح قدرت تفکر برای هر مدل (Thinking Level):</b>\n` +
+            `   ⚡ <b>Low (فوق‌سریع):</b> تفکر خاموش (بودجه ۰) برای پاسخ لحظه‌ای و زیر ۱ ثانیه\n` +
+            `   ⚖️ <b>Medium (متعادل):</b> تفکر متعادل (بودجه ۲۰۴۸) برای تحلیل هوشمندانه و پرسرعت\n` +
+            `   🧠 <b>High (عمیق):</b> تفکر و استدلال حداکثری (بودجه ۸۱۹۲) برای محاسبات و مسائل سخت\n` +
+            `• 🎛️ <b>دستورات تعاملی جدید:</b> داشبورد کامل <code>/model</code>، دستور اختصاصی <code>/power</code> و شورت‌کات‌هایی مثل <code>/model 3.7 low</code>.\n` +
+            `• 🛡️ <b>مدیریت هوشمند خطاها:</b> سازگاری خودکار با مدل‌ها و فال‌بک نرم‌افزاری در صورت بروز خطای تفکر.\n\n` +
+            `<i>مزمز دقیق، پرسرعت و وفادار در خدمت شماست، رئیس مهدی!</i>`,
+            { parse_mode: "HTML" }
+          ).catch((err) => console.warn("Could not send startup notification to admin:", err?.message));
+        }
+
+        // ثبت منوی ۷ دستور اسلش استاندارد در تلگرام برای کاربران و پاکسازی در گروه‌ها
+        await bot.api.setMyCommands([
+          { command: "clear", description: "پاکسازی حافظه و زمینه گفتگو" },
+          { command: "history", description: "مشاهده لاگ پیام‌های اخیر گفتگو" },
+          { command: "model", description: "مشاهده یا تغییر مدل هوش مصنوعی" },
+          { command: "temp", description: "تنظیم میزان خلاقیت پاسخ‌ها (Temperature)" },
+          { command: "lang", description: "تغییر زبان ربات (فارسی / English)" },
+          { command: "system", description: "مشاهده و تنظیم دستورالعمل سیستمی" },
+          { command: "settings", description: "منوی تنظیمات تعاملی ربات" },
+        ], { scope: { type: "default" } }).catch(() => {});
+        await bot.api.deleteMyCommands({ scope: { type: "all_group_chats" } }).catch(() => {});
+        console.log("✅ Standard Slash Commands registered for users via setMyCommands!");
+      } catch (e: any) {
+        console.warn("⚠️ Could not set bot commands automatically:", e?.message || e);
+      }
+
+      activeRunner = run(bot, {
+        runner: {
+          fetch: {
+            allowed_updates: [
+              "message",
+              "edited_message",
+              "callback_query",
+              "my_chat_member",
+              "chat_member",
+            ],
+          },
         },
       });
+
+      await activeRunner.task();
       break;
     } catch (err: any) {
       attempt++;
       const is409 = err?.error_code === 409 || String(err?.message || "").includes("409");
       if (is409) {
         console.warn(`⏳ [Conflict 409] کانتینر قبلی در حال آزادسازی اتصال است. تلاش مجدد (${attempt}/${maxRetries}) در ۴ ثانیه...`);
+        if (activeRunner && activeRunner.isRunning()) {
+          try { await activeRunner.stop(); } catch {}
+        }
         await new Promise((resolve) => setTimeout(resolve, 4000));
       } else {
         console.error(`❌ خطای اتصال به تلگرام:`, err?.message || err);
+        if (activeRunner && activeRunner.isRunning()) {
+          try { await activeRunner.stop(); } catch {}
+        }
         await new Promise((resolve) => setTimeout(resolve, 5000));
       }
     }

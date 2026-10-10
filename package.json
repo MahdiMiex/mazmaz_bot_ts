@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.27.0",
+    "@grammyjs/runner": "^2.0.3",
     "cheerio": "^1.2.0",
     "duck-duck-scrape": "^2.2.7",
     "grammy": "^1.46.0",

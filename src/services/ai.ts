@@ -328,12 +328,58 @@ export async function executeToolWithTimeout(
   }
 }
 
+export const STOPPED_RESULT = "⛔ متوقف شد";
+
+async function callGenerateContentWithAbort(
+  aiClient: any,
+  params: any,
+  sig?: AbortSignal
+): Promise<any> {
+  if (sig?.aborted) {
+    const err: any = new Error("Request aborted");
+    err.name = "AbortError";
+    throw err;
+  }
+
+  const callConfig = {
+    ...params.config,
+    ...(sig ? { abortSignal: sig } : {}),
+  };
+
+  const callPromise = aiClient.models.generateContent({
+    ...params,
+    config: callConfig,
+  });
+
+  if (!sig) return callPromise;
+
+  return Promise.race([
+    callPromise,
+    new Promise((_, reject) => {
+      const onAbort = () => {
+        const err: any = new Error("Request aborted");
+        err.name = "AbortError";
+        reject(err);
+      };
+      if (sig.aborted) {
+        onAbort();
+      } else {
+        sig.addEventListener("abort", onAbort, { once: true });
+      }
+    }),
+  ]);
+}
+
 export async function askGemini(
   userId: number,
   prompt: string,
   imageBase64?: string,
-  ctx?: any
+  ctx?: any,
+  signal?: AbortSignal
 ): Promise<string> {
+  if (signal?.aborted) {
+    return STOPPED_RESULT;
+  }
   const isAdmin = CONFIG.ADMIN_IDS.includes(userId);
 
   // ۱. فیلتر فحش و پاسخ‌های رفاقتی
@@ -864,6 +910,7 @@ export async function askGemini(
 
     for (const m of modelCandidates) {
       if (modelSucceeded) break;
+      if (signal?.aborted) return STOPPED_RESULT;
 
       activeModelName = m;
       const workingContents = JSON.parse(JSON.stringify(contents));
@@ -874,25 +921,33 @@ export async function askGemini(
       let keysTriedCall1 = 0;
 
       while (call1Attempt < 3) {
+        if (signal?.aborted) return STOPPED_RESULT;
         call1Attempt++;
         const currentKey = keyPool[currentKeyIdx % keyPool.length] || apiKey;
         const currentAi = getAiClient(currentKey);
 
         try {
-          call1Res = await currentAi.models.generateContent({
-            model: m,
-            contents: workingContents,
-            config: {
-              systemInstruction,
-              temperature: activeTemperature,
-              tools,
-              thinkingConfig: {
-                thinkingBudget,
+          call1Res = await callGenerateContentWithAbort(
+            currentAi,
+            {
+              model: m,
+              contents: workingContents,
+              config: {
+                systemInstruction,
+                temperature: activeTemperature,
+                tools,
+                thinkingConfig: {
+                  thinkingBudget,
+                },
               },
             },
-          });
+            signal
+          );
           break; // Call 1 succeeded
         } catch (err: any) {
+          if (signal?.aborted || err?.name === "AbortError") {
+            return STOPPED_RESULT;
+          }
           lastErr = err;
           const status =
             err?.status ||
@@ -907,18 +962,26 @@ export async function askGemini(
 
           // If model doesn't support thinkingConfig (400), retry call 1 without thinkingConfig
           if (status === 400 && String(err?.message || "").toLowerCase().includes("thinking")) {
+            if (signal?.aborted) return STOPPED_RESULT;
             try {
-              call1Res = await currentAi.models.generateContent({
-                model: m,
-                contents: workingContents,
-                config: {
-                  systemInstruction,
-                  temperature: activeTemperature,
-                  tools,
+              call1Res = await callGenerateContentWithAbort(
+                currentAi,
+                {
+                  model: m,
+                  contents: workingContents,
+                  config: {
+                    systemInstruction,
+                    temperature: activeTemperature,
+                    tools,
+                  },
                 },
-              });
+                signal
+              );
               break;
             } catch (fallbackErr: any) {
+              if (signal?.aborted || fallbackErr?.name === "AbortError") {
+                return STOPPED_RESULT;
+              }
               lastErr = fallbackErr;
             }
           }
@@ -948,11 +1011,13 @@ export async function askGemini(
           // Server errors (503, 500): retry same model with exponential backoff + jitter
           if (status === 503 || status === 500) {
             if (call1Attempt < 3) {
+              if (signal?.aborted) return STOPPED_RESULT;
               const baseDelay = call1Attempt === 1 ? 1000 : 2000;
               const jitter = Math.floor(Math.random() * 300);
               const totalDelay = baseDelay + jitter;
               console.warn(`[GEMINI RETRY] Model ${m} call 1 failed with status ${status} (attempt ${call1Attempt}/3). Retrying in ${totalDelay}ms...`);
               await new Promise((r) => setTimeout(r, totalDelay));
+              if (signal?.aborted) return STOPPED_RESULT;
               continue;
             } else {
               console.warn(`[GEMINI FALLBACK] Model ${m} call 1 failed after 3 attempts (${status}), switching candidate...`);
@@ -972,9 +1037,15 @@ export async function askGemini(
 
       // If no tool execution needed, Call 1 is the final response
       if (!call1Res.functionCalls || call1Res.functionCalls.length === 0) {
+        if (signal?.aborted) return STOPPED_RESULT;
         response = call1Res;
         modelSucceeded = true;
         break;
+      }
+
+      // Check signal before executing the tools
+      if (signal?.aborted) {
+        return STOPPED_RESULT;
       }
 
       // --- 2. Execute tools exactly ONCE outside the retry loop ---
@@ -1003,8 +1074,12 @@ export async function askGemini(
 
       // Step A: Run read-only batch concurrently with Promise.allSettled and per-tool timeout (20s)
       if (readOnlyBatch.length > 0) {
+        if (signal?.aborted) {
+          return STOPPED_RESULT;
+        }
         await Promise.allSettled(
           readOnlyBatch.map(async ({ index, call }) => {
+            if (signal?.aborted) return;
             const cacheKey = `${call.name}:${JSON.stringify(call.args || {})}`;
             if (toolResultCache.has(cacheKey)) {
               toolResults[index] = toolResultCache.get(cacheKey);
@@ -1033,8 +1108,16 @@ export async function askGemini(
         );
       }
 
+      if (signal?.aborted) {
+        return STOPPED_RESULT;
+      }
+
       // Step B: Run mutating/admin tools SEQUENTIALLY (no timeout), in model's original order, AFTER read-only batch
       for (const { index, call } of mutatingBatch) {
+        if (signal?.aborted) {
+          return STOPPED_RESULT;
+        }
+
         const cacheKey = `${call.name}:${JSON.stringify(call.args || {})}`;
         if (toolResultCache.has(cacheKey)) {
           toolResults[index] = toolResultCache.get(cacheKey);
@@ -1059,6 +1142,10 @@ export async function askGemini(
           toolResults[index] = failureRes;
           toolResultCache.set(cacheKey, failureRes);
         }
+      }
+
+      if (signal?.aborted) {
+        return STOPPED_RESULT;
       }
 
       // Step C: Assemble ALL functionResponse parts in ONE user message, in EXACT model order
@@ -1099,23 +1186,35 @@ export async function askGemini(
         },
       };
 
+      if (signal?.aborted) {
+        return STOPPED_RESULT;
+      }
+
       let call2Res: any = null;
       let call2Attempt = 0;
       let keysTriedCall2 = 0;
 
       while (call2Attempt < 3) {
+        if (signal?.aborted) return STOPPED_RESULT;
         call2Attempt++;
         const currentKey = keyPool[currentKeyIdx % keyPool.length] || apiKey;
         const currentAi = getAiClient(currentKey);
 
         try {
-          call2Res = await currentAi.models.generateContent({
-            model: m,
-            contents: secondContents,
-            config: secondCallConfig,
-          });
+          call2Res = await callGenerateContentWithAbort(
+            currentAi,
+            {
+              model: m,
+              contents: secondContents,
+              config: secondCallConfig,
+            },
+            signal
+          );
           break; // Call 2 succeeded
         } catch (err: any) {
+          if (signal?.aborted || err?.name === "AbortError") {
+            return STOPPED_RESULT;
+          }
           lastErr = err;
           const status =
             err?.status ||
@@ -1130,6 +1229,7 @@ export async function askGemini(
 
           // If model doesn't support thinkingConfig (400), retry call 2 without thinkingConfig
           if (status === 400 && String(err?.message || "").toLowerCase().includes("thinking")) {
+            if (signal?.aborted) return STOPPED_RESULT;
             try {
               const fallbackConfig = {
                 systemInstruction,
@@ -1141,13 +1241,20 @@ export async function askGemini(
                   },
                 },
               };
-              call2Res = await currentAi.models.generateContent({
-                model: m,
-                contents: secondContents,
-                config: fallbackConfig,
-              });
+              call2Res = await callGenerateContentWithAbort(
+                currentAi,
+                {
+                  model: m,
+                  contents: secondContents,
+                  config: fallbackConfig,
+                },
+                signal
+              );
               break;
             } catch (fallbackErr: any) {
+              if (signal?.aborted || fallbackErr?.name === "AbortError") {
+                return STOPPED_RESULT;
+              }
               lastErr = fallbackErr;
             }
           }
@@ -1174,11 +1281,13 @@ export async function askGemini(
 
           if (status === 503 || status === 500) {
             if (call2Attempt < 3) {
+              if (signal?.aborted) return STOPPED_RESULT;
               const baseDelay = call2Attempt === 1 ? 1000 : 2000;
               const jitter = Math.floor(Math.random() * 300);
               const totalDelay = baseDelay + jitter;
               console.warn(`[GEMINI RETRY] Model ${m} call 2 failed with status ${status} (attempt ${call2Attempt}/3). Retrying in ${totalDelay}ms...`);
               await new Promise((r) => setTimeout(r, totalDelay));
+              if (signal?.aborted) return STOPPED_RESULT;
               continue;
             } else {
               console.warn(`[GEMINI FALLBACK] Model ${m} call 2 failed after 3 attempts (${status}), switching candidate...`);
@@ -1195,22 +1304,34 @@ export async function askGemini(
         continue;
       }
 
+      if (signal?.aborted) {
+        return STOPPED_RESULT;
+      }
+
       // Check if reply is empty after second call, retry that second call once before fallback
       let call2Text = extractPartsText(call2Res);
       if (!call2Text) {
+        if (signal?.aborted) return STOPPED_RESULT;
         console.warn(`[GEMINI RETRY] Reply empty after second call on model ${m}. Retrying second call once...`);
         try {
           const currentKey = keyPool[currentKeyIdx % keyPool.length] || apiKey;
           const currentAi = getAiClient(currentKey);
-          const retryRes = await currentAi.models.generateContent({
-            model: m,
-            contents: secondContents,
-            config: secondCallConfig,
-          });
+          const retryRes = await callGenerateContentWithAbort(
+            currentAi,
+            {
+              model: m,
+              contents: secondContents,
+              config: secondCallConfig,
+            },
+            signal
+          );
           if (retryRes) {
             call2Res = retryRes;
           }
         } catch (retryErr: any) {
+          if (signal?.aborted || retryErr?.name === "AbortError") {
+            return STOPPED_RESULT;
+          }
           const status = retryErr?.status || retryErr?.error?.code || (String(retryErr?.message || "").includes("429") ? 429 : 0);
           if (status === 429) {
             markModelCooldown(m, 60000);
@@ -1252,12 +1373,19 @@ export async function askGemini(
       reply = "هوم؟ جوابم وسط راه گم شد 😅 یه بار دیگه بفرست.";
     }
 
+    if (signal?.aborted) {
+      return STOPPED_RESULT;
+    }
+
     // ذخیره در حافظه دیتابیس برای تداوم مکالمه
     saveChatMessage(userId, "user", prompt);
     saveChatMessage(userId, "model", reply);
 
     return reply;
   } catch (error: any) {
+    if (signal?.aborted || error?.name === "AbortError") {
+      return STOPPED_RESULT;
+    }
     console.error("Gemini API Error:", error?.status || error?.message || "unknown error");
     return "سرور هوش مصنوعی در حال حاضر شلوغ است، لطفاً یک دقیقه دیگر تلاش کنید ⏳";
   }

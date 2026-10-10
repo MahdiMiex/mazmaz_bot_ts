@@ -1,5 +1,5 @@
 import { Context, InlineKeyboard } from "grammy";
-import { askGemini, checkProfanity, isPersian, testGeminiKey, isSensitiveExfiltrationAttempt } from "../services/ai";
+import { askGemini, checkProfanity, isPersian, testGeminiKey, isSensitiveExfiltrationAttempt, STOPPED_RESULT } from "../services/ai";
 import { isMediaUrl } from "../services/mediaDownloader";
 import { sendMusicToTelegram } from "../services/musicService";
 import { isGeneralWebUrl, fetchAndAnalyzeLink } from "../services/linkReader";
@@ -33,6 +33,8 @@ const GREETINGS_EN = [
   "At your service! What's on your mind today? 😎",
   "Always happy to hear from you! What do you need? ✨",
 ];
+
+export const runningTasks = new Map<number, AbortController>();
 
 export async function handleTextMessage(ctx: Context) {
   const text = ctx.message?.text?.trim();
@@ -463,7 +465,19 @@ export async function handleTextMessage(ctx: Context) {
   const musicMatch = (cleanText || text).match(/^(?:دانلود\s+)?(?:آهنگ|موزیک|ترانه|موسیقی)\s+(.+)/i);
   if (musicMatch && musicMatch[1]) {
     incrementStat("downloads_requested");
-    await sendMusicToTelegram(ctx, musicMatch[1].trim());
+    const chatId = ctx.chat?.id;
+    const controller = new AbortController();
+    if (chatId !== undefined) {
+      runningTasks.get(chatId)?.abort();
+      runningTasks.set(chatId, controller);
+    }
+    try {
+      await sendMusicToTelegram(ctx, musicMatch[1].trim(), undefined, undefined, controller.signal);
+    } finally {
+      if (chatId !== undefined && runningTasks.get(chatId) === controller) {
+        runningTasks.delete(chatId);
+      }
+    }
     return;
   }
 
@@ -699,40 +713,77 @@ export async function handleTextMessage(ctx: Context) {
 
   // 12. چت عمومی هوش مصنوعی با Gemini و سیستم پیش‌نمایش و تایپینگ زنده
   incrementStat("ai_queries");
-  const statusMsg = await ctx.reply("💭 <i>در حال تفکر و تدوین پاسخ هوشمند... ⏳</i>", {
-    ...replyOpts,
-    parse_mode: "HTML",
-  });
-
-  let replyContext = "";
-  if (replyMsg && replyUser) {
-    const sender = `${replyUser.first_name || ""} ${replyUser.last_name || ""}`.trim() || "نامشخص";
-    replyContext += `\n[کانتکست پیام ریپلای‌شده: فرستنده="${sender}" | شناسه عددی (user_id)=${replyUser.id} | متن="${replyMsg.text || replyMsg.caption || "[رسانه/عکس]"}" | شناسه پیام=${replyMsg.message_id}]`;
-  }
-  if (isGroup && ctx.chat) {
-    replyContext += `\n[کانتکست گروه: عنوان="${ctx.chat.title || "گروه"}" | شناسه عددی چت (chat_id)=${ctx.chat.id}]`;
+  const chatId = ctx.chat?.id;
+  const controller = new AbortController();
+  if (chatId !== undefined) {
+    runningTasks.get(chatId)?.abort();
+    runningTasks.set(chatId, controller);
   }
 
-  const promptToSend = (cleanText || text) + replyContext;
-  const rawResponse = await withTyping(ctx, () => askGemini(userId, promptToSend, undefined, ctx));
-  const formattedResponse = markdownToTelegramHtml(rawResponse);
-  const customFooter = getSetting("custom_footer");
-  const footerStr = customFooter ? `\n\n${customFooter}` : "";
-  const finalResponse = `${formattedResponse}${footerStr}${formatQuotaFooter(userId)}`;
-
-  if (finalResponse.length <= 4000) {
-    try {
-      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalResponse, {
-        parse_mode: "HTML",
-      });
-    } catch (e: any) {
-      await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, `${rawResponse}${formatQuotaFooter(userId)}`).catch(() => {});
-    }
-  } else {
-    await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
-    await sendSafeMessage(ctx, finalResponse, {
+  let statusMsg: any = null;
+  try {
+    statusMsg = await ctx.reply("💭 <i>در حال تفکر و تدوین پاسخ هوشمند... ⏳</i>", {
       ...replyOpts,
       parse_mode: "HTML",
     });
+
+    if (controller.signal.aborted) {
+      if (statusMsg && ctx.api?.editMessageText && ctx.chat) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, "⛔ متوقف شد").catch(() => {});
+      }
+      return;
+    }
+
+    let replyContext = "";
+    if (replyMsg && replyUser) {
+      const sender = `${replyUser.first_name || ""} ${replyUser.last_name || ""}`.trim() || "نامشخص";
+      replyContext += `\n[کانتکست پیام ریپلای‌شده: فرستنده="${sender}" | شناسه عددی (user_id)=${replyUser.id} | متن="${replyMsg.text || replyMsg.caption || "[رسانه/عکس]"}" | شناسه پیام=${replyMsg.message_id}]`;
+    }
+    if (isGroup && ctx.chat) {
+      replyContext += `\n[کانتکست گروه: عنوان="${ctx.chat.title || "گروه"}" | شناسه عددی چت (chat_id)=${ctx.chat.id}]`;
+    }
+
+    const promptToSend = (cleanText || text) + replyContext;
+    const rawResponse = await withTyping(ctx, () => askGemini(userId, promptToSend, undefined, ctx, controller.signal));
+
+    if (controller.signal.aborted || rawResponse === STOPPED_RESULT) {
+      if (statusMsg && ctx.api?.editMessageText && ctx.chat) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, "⛔ متوقف شد").catch(() => {});
+      }
+      return;
+    }
+
+    const formattedResponse = markdownToTelegramHtml(rawResponse);
+    const customFooter = getSetting("custom_footer");
+    const footerStr = customFooter ? `\n\n${customFooter}` : "";
+    const finalResponse = `${formattedResponse}${footerStr}${formatQuotaFooter(userId)}`;
+
+    if (finalResponse.length <= 4000) {
+      try {
+        await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, finalResponse, {
+          parse_mode: "HTML",
+        });
+      } catch (e: any) {
+        await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, `${rawResponse}${formatQuotaFooter(userId)}`).catch(() => {});
+      }
+    } else {
+      await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+      await sendSafeMessage(ctx, finalResponse, {
+        ...replyOpts,
+        parse_mode: "HTML",
+      });
+    }
+  } catch (err: any) {
+    if (controller.signal.aborted) {
+      if (statusMsg && ctx.api?.editMessageText && ctx.chat) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, "⛔ متوقف شد").catch(() => {});
+      }
+      return;
+    }
+    throw err;
+  } finally {
+    if (chatId !== undefined && runningTasks.get(chatId) === controller) {
+      runningTasks.delete(chatId);
+    }
   }
 }
