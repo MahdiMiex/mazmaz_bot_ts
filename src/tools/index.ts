@@ -246,7 +246,29 @@ export async function executeTool(
       }
       case "get_weather": {
         const city = args.city || "تهران";
-        return await runToolWithLogger("WEATHER", city, () => getWeather(city));
+        return await runToolWithLogger("WEATHER", city, async () => {
+          try {
+            const openMeteoRes = await getWeather(city);
+            if (openMeteoRes && !openMeteoRes.startsWith("خطا")) {
+              return openMeteoRes;
+            }
+          } catch {}
+
+          // Fallback to wttr.in via executeCustomTool
+          const fallback = await executeCustomTool("get_weather", { city });
+          if (fallback && !fallback.error) {
+            return (
+              `🌤️ <b>وضعیت زنده آب و هوای ${city}:</b>\n\n` +
+              `🌡️ دمای فعلی: <b>${fallback.temp_C}°C</b>\n` +
+              `☁️ شرایط جوی: <b>${fallback.weather}</b>\n` +
+              `💧 رطوبت نسبی: <b>${fallback.humidity}%</b>` +
+              (fallback.feelsLike_C ? `\n🌡️ حس واقعی: <b>${fallback.feelsLike_C}°C</b>` : "") +
+              (fallback.windspeedKmph ? `\n💨 سرعت باد: <b>${fallback.windspeedKmph} km/h</b>` : "")
+            );
+          }
+
+          return `امکان دریافت وضعیت آب و هوا برای شهر «${city}» در این لحظه میسر نشد.`;
+        });
       }
       case "get_crypto_prices": {
         return await runToolWithLogger("CRYPTO", args.query || "all", () => getCryptoPrices());
