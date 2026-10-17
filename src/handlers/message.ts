@@ -743,6 +743,7 @@ export async function handleTextMessage(ctx: Context) {
     statusMsg = await ctx.reply("💭 <i>در حال تفکر و تدوین پاسخ هوشمند... ⏳</i>", {
       ...replyOpts,
       parse_mode: "HTML",
+      message_effect_id: "5104841245755180586",
     });
 
     if (controller.signal.aborted) {
