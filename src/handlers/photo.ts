@@ -78,6 +78,10 @@ export async function handlePhotoMessage(ctx: Context) {
       const base64 = Buffer.from(arrayBuffer).toString("base64");
 
       const rawAnalysis = await askGemini(userId, caption, base64, ctx);
+      if (!rawAnalysis || typeof rawAnalysis !== "string" || !rawAnalysis.trim()) {
+        await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, "⚠️ پاسخی از هوش مصنوعی برای تحلیل تصویر دریافت نشد.").catch(() => {});
+        return;
+      }
       const analysis = markdownToTelegramHtml(rawAnalysis);
       const finalMsg = `🖼️ <b>تحلیل هوشمند تصویر توسط مزمز:</b>\n\n${analysis}${formatQuotaFooter(userId)}`;
 

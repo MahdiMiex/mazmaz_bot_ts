@@ -405,6 +405,12 @@ export async function handleTextMessage(ctx: Context) {
     });
 
     const rawSummary = await withTyping(ctx, () => askGemini(userId, summaryPrompt, undefined, ctx));
+    if (!rawSummary || typeof rawSummary !== "string" || !rawSummary.trim()) {
+      if (statusMsg && ctx.api?.editMessageText && ctx.chat) {
+        await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, "⚠️ پاسخی برای خلاصه کردن پیام‌ها دریافت نشد.").catch(() => {});
+      }
+      return;
+    }
     const formattedSummary = markdownToTelegramHtml(rawSummary);
 
     try {
@@ -797,6 +803,18 @@ export async function handleTextMessage(ctx: Context) {
     if (controller.signal.aborted || rawResponse === STOPPED_RESULT) {
       if (statusMsg && ctx.api?.editMessageText && ctx.chat) {
         await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, "⛔ متوقف شد").catch(() => {});
+      }
+      return;
+    }
+
+    // Empty response guard: verify response exists and is not empty before sending reply to Telegram
+    if (!rawResponse || typeof rawResponse !== "string" || !rawResponse.trim()) {
+      if (statusMsg && ctx.api?.editMessageText && ctx.chat) {
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          statusMsg.message_id,
+          "⚠️ پاسخی از سرور هوش مصنوعی دریافت نشد یا پاسخ خالی بود. لطفاً مجدداً سوال خود را ارسال فرمایید."
+        ).catch(() => {});
       }
       return;
     }

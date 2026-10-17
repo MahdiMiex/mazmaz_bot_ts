@@ -51,6 +51,11 @@ export function isDeadModel(name: string): boolean {
   );
 }
 
+export function isSearchIntentQuery(text: string): boolean {
+  const recentKeywordsRegex = /(?:آخرین|جدیدترین|نسخه[\s‌]*جدید|آپدیت|بروزرسانی|به‌روزرسانی|انتشار|معرفی|رونمایی|عرضه|قیمت|نرخ|ارز|دلار|تتر|بیت[\s‌]*کوین|مدل[\s‌]*های|هوش[\s‌]*مصنوعی|اخبار|خبر|update|updates|release|releases|latest|new\s*version|price|prices|rate|model|models|gemini|gpt|claude|deepseek|llama|qwen|sora)/i;
+  return recentKeywordsRegex.test(String(text || ""));
+}
+
 export type PowerLevel = "low" | "medium" | "high";
 
 export function getThinkingBudget(level: string): number {
@@ -644,6 +649,10 @@ export async function askGemini(
       systemInstruction += dynamicRulesText;
     }
 
+    const currentDate = new Date().toISOString().slice(0, 10);
+    const strictSearchDirective = "پاسخ به سوالات درباره آخرین اخبار، نسخه‌های جدید نرم‌افزار، مدل‌های هوش مصنوعی و قیمت‌ها از حافظه داخلی اکیداً ممنوع است. قبل از پاسخ، اجرای ابزار سرچ وب الزامی است. در صورت نبود نتیجه یا عدم دسترسی به وب، بگو دسترسی به اطلاعات زنده نداری و حدس نزن.";
+    systemInstruction = `${strictSearchDirective}\n\n[Current Date: ${currentDate}]\n\n${systemInstruction}`;
+
     const functionDeclarations: any[] = [
       ...(webToolsDeclaration as any[]),
       {
@@ -873,7 +882,8 @@ export async function askGemini(
       );
     }
 
-    const tools = [{ functionDeclarations }];
+    const tools: any[] = [{ functionDeclarations }, { googleSearch: {} }];
+    const isForcedSearch = isSearchIntentQuery(prompt);
 
     let response: any = null;
     let lastErr: any = null;
@@ -936,6 +946,16 @@ export async function askGemini(
                 systemInstruction,
                 temperature: activeTemperature,
                 tools,
+                ...(isForcedSearch
+                  ? {
+                      toolConfig: {
+                        functionCallingConfig: {
+                          mode: "ANY" as any,
+                          allowedFunctionNames: ["web_search"],
+                        },
+                      },
+                    }
+                  : {}),
                 thinkingConfig: {
                   thinkingBudget,
                 },
@@ -973,6 +993,16 @@ export async function askGemini(
                     systemInstruction,
                     temperature: activeTemperature,
                     tools,
+                    ...(isForcedSearch
+                      ? {
+                          toolConfig: {
+                            functionCallingConfig: {
+                              mode: "ANY" as any,
+                              allowedFunctionNames: ["web_search"],
+                            },
+                          },
+                        }
+                      : {}),
                   },
                 },
                 signal
@@ -1033,6 +1063,28 @@ export async function askGemini(
 
       if (!call1Res) {
         continue;
+      }
+
+      // If query mentions recent models, updates, prices, or releases, force execution of custom search tool
+      if (isForcedSearch && (!call1Res.functionCalls || call1Res.functionCalls.length === 0)) {
+        call1Res.functionCalls = [
+          {
+            name: "web_search",
+            args: { query: prompt.slice(0, 150) },
+          },
+        ];
+        if (!call1Res.candidates?.[0]?.content) {
+          call1Res.candidates = [
+            {
+              content: {
+                role: "model",
+                parts: [{ functionCall: call1Res.functionCalls[0] }],
+              },
+            },
+          ];
+        } else if (!call1Res.candidates[0].content.parts) {
+          call1Res.candidates[0].content.parts = [{ functionCall: call1Res.functionCalls[0] }];
+        }
       }
 
       // If no tool execution needed, Call 1 is the final response
@@ -1363,7 +1415,8 @@ export async function askGemini(
       `[GEMINI METRICS] Model: ${activeModelName}, Power: ${activePower} (budget: ${thinkingBudget}), finishReason: ${cand0?.finishReason || "UNKNOWN"}, parts: [${partKinds.join(", ")}], usageMetadata: ${JSON.stringify(response?.usageMetadata || {})}`
     );
 
-    let reply = parts
+    const responseText = typeof response?.text === "string" ? response.text : "";
+    let reply = responseText.trim() || parts
       .filter((part: any) => typeof part?.text === "string" && part?.thought !== true)
       .map((part: any) => part.text)
       .join("")
