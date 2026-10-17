@@ -739,19 +739,42 @@ export async function handleTextMessage(ctx: Context) {
   }
 
   let statusMsg: any = null;
+  let timer: any = null;
+  let isDone = false;
+  const statusText = "💭 <i>در حال تفکر و تدوین پاسخ هوشمند... ⏳</i>";
+
   try {
-    statusMsg = await ctx.reply("💭 <i>در حال تفکر و تدوین پاسخ هوشمند... ⏳</i>", {
+    statusMsg = await ctx.reply(statusText, {
       ...replyOpts,
       parse_mode: "HTML",
-      message_effect_id: "5104841245755180586",
     });
 
     if (controller.signal.aborted) {
+      isDone = true;
       if (statusMsg && ctx.api?.editMessageText && ctx.chat) {
         await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, "⛔ متوقف شد").catch(() => {});
       }
       return;
     }
+
+    let elapsed = 0;
+    timer = setInterval(async () => {
+      elapsed += 1;
+      if (isDone || controller.signal.aborted || !ctx.chat || !statusMsg) {
+        if (timer) clearInterval(timer);
+        return;
+      }
+      try {
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          statusMsg.message_id,
+          `${statusText} ${elapsed}s`,
+          { parse_mode: "HTML" }
+        );
+      } catch {
+        // Ignore edit errors (e.g. rate limits or network issues)
+      }
+    }, 1000);
 
     let replyContext = "";
     if (replyMsg && replyUser) {
@@ -764,6 +787,12 @@ export async function handleTextMessage(ctx: Context) {
 
     const promptToSend = (cleanText || text) + replyContext;
     const rawResponse = await withTyping(ctx, () => askGemini(userId, promptToSend, undefined, ctx, controller.signal));
+
+    isDone = true;
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
 
     if (controller.signal.aborted || rawResponse === STOPPED_RESULT) {
       if (statusMsg && ctx.api?.editMessageText && ctx.chat) {
@@ -793,6 +822,11 @@ export async function handleTextMessage(ctx: Context) {
       });
     }
   } catch (err: any) {
+    isDone = true;
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
     if (controller.signal.aborted) {
       if (statusMsg && ctx.api?.editMessageText && ctx.chat) {
         await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, "⛔ متوقف شد").catch(() => {});
@@ -801,6 +835,11 @@ export async function handleTextMessage(ctx: Context) {
     }
     throw err;
   } finally {
+    isDone = true;
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
     if (chatId !== undefined && runningTasks.get(chatId) === taskEntry) {
       runningTasks.delete(chatId);
     }
