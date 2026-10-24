@@ -41,6 +41,7 @@ export const CONFIG = {
   BRAVE_API_KEY: process.env.BRAVE_API_KEY || "",
   SEARXNG_URL: process.env.SEARXNG_URL || "",
   DEFAULT_DAILY_QUOTA: parseInt(process.env.DEFAULT_DAILY_QUOTA || "24", 10),
+  ENABLE_GOOGLE_SEARCH_GROUNDING: process.env.ENABLE_GOOGLE_SEARCH_GROUNDING === "true",
   DB_PATH: getDatabasePath(),
   DOWNLOADS_DIR: path.resolve(import.meta.dir, "../downloads"),
 };

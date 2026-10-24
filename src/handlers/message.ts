@@ -830,7 +830,14 @@ export async function handleTextMessage(ctx: Context) {
           parse_mode: "HTML",
         });
       } catch (e: any) {
-        await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, `${rawResponse}${formatQuotaFooter(userId)}`).catch(() => {});
+        try {
+          await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, `${rawResponse}${formatQuotaFooter(userId)}`);
+        } catch {
+          await sendSafeMessage(ctx, finalResponse, {
+            ...replyOpts,
+            parse_mode: "HTML",
+          }).catch(() => {});
+        }
       }
     } else {
       await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});

@@ -882,7 +882,10 @@ export async function askGemini(
       );
     }
 
-    const tools: any[] = [{ functionDeclarations }, { googleSearch: {} }];
+    const enableGoogleSearch = CONFIG.ENABLE_GOOGLE_SEARCH_GROUNDING || getSetting("enable_google_search_grounding") === "true";
+    let tools: any[] = enableGoogleSearch
+      ? [{ functionDeclarations }, { googleSearch: {} }]
+      : [{ functionDeclarations }];
     const isForcedSearch = isSearchIntentQuery(prompt);
 
     let response: any = null;
@@ -956,9 +959,13 @@ export async function askGemini(
                       },
                     }
                   : {}),
-                thinkingConfig: {
-                  thinkingBudget,
-                },
+                ...(thinkingBudget > 0
+                  ? {
+                      thinkingConfig: {
+                        thinkingBudget,
+                      },
+                    }
+                  : {}),
               },
             },
             signal
@@ -981,7 +988,7 @@ export async function askGemini(
               : 0);
 
           // If model doesn't support thinkingConfig (400), retry call 1 without thinkingConfig
-          if (status === 400 && String(err?.message || "").toLowerCase().includes("thinking")) {
+          if (status === 400 && thinkingBudget > 0) {
             if (signal?.aborted) return STOPPED_RESULT;
             try {
               call1Res = await callGenerateContentWithAbort(
@@ -1014,6 +1021,15 @@ export async function askGemini(
               }
               lastErr = fallbackErr;
             }
+          }
+
+          // If 429 or 400 occurred and googleSearch was included in tools, it means the API key lacks Google Grounding quota.
+          // Fall back immediately to custom tools without cooling down the key or model.
+          if ((status === 429 || status === 400) && tools.some((t: any) => t?.googleSearch)) {
+            console.warn(`[GEMINI] Tool googleSearch quota exceeded (status ${status}). Falling back to custom web_search...`);
+            tools = [{ functionDeclarations }];
+            call1Attempt--;
+            continue;
           }
 
           // Non-retryable errors (400, 401, 403, 404): skip candidate immediately
@@ -1233,9 +1249,13 @@ export async function askGemini(
             mode: "NONE" as any,
           },
         },
-        thinkingConfig: {
-          thinkingBudget,
-        },
+        ...(thinkingBudget > 0
+          ? {
+              thinkingConfig: {
+                thinkingBudget,
+              },
+            }
+          : {}),
       };
 
       if (signal?.aborted) {
@@ -1309,6 +1329,13 @@ export async function askGemini(
               }
               lastErr = fallbackErr;
             }
+          }
+
+          if ((status === 429 || status === 400) && secondCallConfig.tools?.some((t: any) => t?.googleSearch)) {
+            console.warn(`[GEMINI] Tool googleSearch quota exceeded on call 2. Retrying without googleSearch...`);
+            secondCallConfig.tools = [{ functionDeclarations }];
+            call2Attempt--;
+            continue;
           }
 
           if (status === 400 || status === 401 || status === 403 || status === 404) {
